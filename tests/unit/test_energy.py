@@ -19,6 +19,14 @@ def test_normalize_energy(raw, scale, unit, expected) -> None:
     assert normalize_energy(raw, scale, unit) == expected
 
 
+def test_normalization_does_not_round_beyond_decimal_context_precision() -> None:
+    raw = Decimal("0.12345678901234567890123456789")
+    assert normalize_energy(raw, 0, "kWh") == raw
+    assert normalize_energy(raw, 0, "Wh") == Decimal(
+        "0.00012345678901234567890123456789"
+    )
+
+
 @pytest.mark.parametrize("raw", [True, "nope", "NaN", "Infinity"])
 def test_rejects_non_numeric_values(raw) -> None:
     with pytest.raises(UserFacingError):
@@ -33,4 +41,3 @@ def test_rejects_unsupported_unit() -> None:
 def test_decimal_serialization_is_canonical() -> None:
     assert canonical_decimal(Decimal("123.4500")) == "123.45"
     assert canonical_decimal(Decimal("0.000")) == "0"
-

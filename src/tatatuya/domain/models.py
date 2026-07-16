@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 
 
 class Currency(StrEnum):
@@ -34,6 +35,23 @@ class EnergySpecification:
     code: str
     unit: str
     scale: int
+
+
+@dataclass(frozen=True, slots=True)
+class StatusValue:
+    code: str
+    value: Any
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceStatus:
+    device_id: str
+    statuses: tuple[StatusValue, ...]
+    raw_json: str
+
+    def value_for(self, code: str) -> Any | None:
+        matches = [item.value for item in self.statuses if item.code == code]
+        return matches[0] if len(matches) == 1 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,4 +102,3 @@ class DevicePricePreference:
     last_unit_price: Decimal | None
     price_currency: Currency | None
     updated_at_utc: datetime | None
-

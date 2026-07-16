@@ -34,6 +34,9 @@ class CalculationRepository:
                 to_utc_text(calculation.created_at_utc),
             ),
         )
+        calculation_id = cursor.lastrowid
+        if calculation_id is None:
+            raise sqlite3.DatabaseError("SQLite did not return a calculation ID")
         return Calculation(
             device_id=calculation.device_id,
             start_reading_id=calculation.start_reading_id,
@@ -43,7 +46,7 @@ class CalculationRepository:
             currency=calculation.currency,
             total=calculation.total,
             created_at_utc=calculation.created_at_utc,
-            id=int(cursor.lastrowid),
+            id=int(calculation_id),
         )
 
     def list_for_device(self, device_id: str) -> list[Calculation]:
@@ -134,4 +137,3 @@ def _map_calculation(row: sqlite3.Row) -> Calculation:
         total=Decimal(row["total"]),
         created_at_utc=from_utc_text(row["created_at_utc"]),
     )
-

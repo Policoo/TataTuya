@@ -64,6 +64,5 @@ def important_device_fields(device: dict[str, Any]) -> list[tuple[str, Any]]:
         ("Status", online_label(device.get("online"))),
         ("Time Zone", value_from(device, "time_zone")),
         ("Owner ID", value_from(device, "owner_id", "uid")),
-        ("Local Key", value_from(device, "local_key")),
     ]
     return [(label, value) for label, value in fields if value != "-"]

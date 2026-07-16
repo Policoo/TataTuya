@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "result": [
+    {
+      "id": "meter-2",
+      "status": [
+        {"code": "forward_energy_total", "value": 765432}
+      ]
+    },
+    {
+      "id": "meter-1",
+      "status": [
+        {"code": "forward_energy_total", "value": 123456},
+        {"code": "switch", "value": true}
+      ]
+    }
+  ]
+}

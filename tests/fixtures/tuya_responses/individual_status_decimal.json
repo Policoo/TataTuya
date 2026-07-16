@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "result": [
+    {
+      "code": "forward_energy_total",
+      "value": 0.12345678901234567890123456789
+    }
+  ]
+}

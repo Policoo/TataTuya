@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "result": {
+    "status": [
+      {
+        "code": "switch",
+        "type": "Boolean",
+        "values": "{}"
+      },
+      {
+        "code": "forward_energy_total",
+        "type": "Integer",
+        "values": "{\"unit\":\"kWh\",\"min\":0,\"max\":99999999,\"scale\":2,\"step\":1}"
+      }
+    ]
+  }
+}

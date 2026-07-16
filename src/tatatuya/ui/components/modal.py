@@ -46,11 +46,11 @@ class AppModal(QDialog):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(self.content)
         layout.addWidget(scroll, 1)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -67,9 +67,11 @@ class AppModal(QDialog):
             label_widget.setObjectName("FieldLabel")
             value_widget = QLabel(format_value(value))
             value_widget.setObjectName("FieldValue")
-            value_widget.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            value_widget.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
             value_widget.setWordWrap(True)
-            grid.addWidget(label_widget, row, 0, Qt.AlignTop)
+            grid.addWidget(label_widget, row, 0, Qt.AlignmentFlag.AlignTop)
             grid.addWidget(value_widget, row, 1)
 
         grid.setColumnStretch(1, 1)
@@ -78,6 +80,8 @@ class AppModal(QDialog):
     def clear_content(self) -> None:
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
+            if item is None:
+                continue
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()

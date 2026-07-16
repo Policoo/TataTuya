@@ -1,0 +1,7 @@
+{
+  "success": true,
+  "result": [
+    {"code": "switch", "value": true},
+    {"code": "forward_energy_total", "value": 123456}
+  ]
+}

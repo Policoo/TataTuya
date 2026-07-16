@@ -59,13 +59,13 @@ Acceptance:
 
 ## Phase 4: Tuya client refactor
 
-- [ ] Separate request signing from the client's endpoint methods.
-- [ ] Load credentials through Settings rather than module constants.
-- [ ] Keep diagnostic request information without exposing secrets in logs.
-- [ ] Implement device list, specification, individual status, and batch status.
-- [ ] Split batch requests into groups of at most 20 devices.
-- [ ] Parse responses into typed transport/domain values.
-- [ ] Add fixture-based client and parser tests.
+- [x] Separate request signing from the client's endpoint methods.
+- [x] Load credentials through Settings rather than module constants.
+- [x] Keep diagnostic request information without exposing secrets in logs.
+- [x] Implement device list, specification, individual status, and batch status.
+- [x] Split batch requests into groups of at most 20 devices.
+- [x] Parse responses into typed transport/domain values.
+- [x] Add fixture-based client and parser tests.
 
 Acceptance:
 
@@ -75,14 +75,14 @@ Acceptance:
 
 ## Phase 5: Reading and refresh services
 
-- [ ] Implement device discovery and metadata upsert.
-- [ ] Resolve and cache `forward_energy_total` specifications.
-- [ ] Refresh stale or incompatible specifications.
-- [ ] Normalize and store every successful batch reading.
-- [ ] Store readings from individual Status calls.
-- [ ] Preserve successful devices when another device fails.
-- [ ] Return per-device loading/error results suitable for the UI.
-- [ ] Add workflow integration tests for batch size, repeated readings, offline
+- [x] Implement device discovery and metadata upsert.
+- [x] Resolve and cache `forward_energy_total` specifications.
+- [x] Refresh stale or incompatible specifications.
+- [x] Normalize and store every successful batch reading.
+- [x] Store readings from individual Status calls.
+- [x] Preserve successful devices when another device fails.
+- [x] Return per-device loading/error results suitable for the UI.
+- [x] Add workflow integration tests for batch size, repeated readings, offline
   devices, missing energy fields, and partial failures.
 
 Acceptance:

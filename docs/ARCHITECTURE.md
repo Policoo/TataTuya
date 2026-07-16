@@ -239,18 +239,23 @@ for this version.
 Discovery updates cached device metadata without mutating Tuya. A disappeared
 device is not allowed to orphan or delete historical data.
 
+The associated-user device endpoint is cursor-paginated. Follow `has_more` and
+`last_row_key` until all pages are loaded, and deduplicate devices by Tuya ID.
+Sensitive device credentials such as `local_key` are redacted before raw
+metadata is retained for diagnostics.
+
 ### Specifications
 
 For each applicable device, retrieve or load its specification and locate the
 status definition for `forward_energy_total`. Cache code, unit, and scale on the
 device, while retaining enough raw data for diagnostics.
 
-Refresh a specification when:
-
-- The device is first discovered.
-- Cached specification fields are incomplete.
-- Product identity changes.
-- A status response no longer matches the cached definition.
+Code, unit, and scale remain cached for local metadata and diagnostics, but the
+first release revalidates the specification once at the start of every batch or
+individual reading-capture workflow. This deliberately favors billing
+correctness over one fewer API request: a scale or unit can change while the
+`forward_energy_total` code remains unchanged. Each saved reading retains the
+exact specification used for that capture.
 
 ### Batch status
 
@@ -289,6 +294,7 @@ load settings
 ```text
 request status
   -> retain raw status for display
+  -> revalidate energy specification
   -> normalize forward energy when present
   -> store reading
   -> return status and capture result
@@ -321,6 +327,11 @@ class UserFacingError(Exception):
 Examples include missing settings, Tuya authentication failures, unsupported
 units, unavailable energy fields, invalid prices, insufficient readings, and
 meter resets.
+
+HTTP error bodies are diagnostic input, not trusted display text. JSON bodies
+are parsed with exact decimal handling and recursively redact sensitive fields.
+Opaque non-JSON bodies are not retained; diagnostics record only their format
+and length so an unknown credential cannot leak through raw upstream text.
 
 Worker code returns failures to the main thread. The UI owns dialog creation and
 always restores loading controls in success and failure paths. Unexpected errors

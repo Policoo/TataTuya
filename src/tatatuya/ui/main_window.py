@@ -61,7 +61,9 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(self.refresh_devices)
 
         self.settings_button = QPushButton("Settings")
-        settings_icon = self.style().standardIcon(QStyle.SP_FileDialogDetailedView)
+        settings_icon = self.style().standardIcon(
+            QStyle.StandardPixmap.SP_FileDialogDetailedView
+        )
         self.settings_button.setIcon(settings_icon)
         self.settings_button.clicked.connect(self.open_settings)
 

@@ -10,10 +10,19 @@ from tatatuya.domain.models import (
     Calculation,
     Currency,
     Device,
+    DeviceStatus,
     DevicePricePreference,
+    EnergySpecification,
     Reading,
     TuyaSettings,
 )
+
+
+class TuyaGateway(Protocol):
+    def list_devices(self, **params: object) -> list[Device]: ...
+    def get_device_specification(self, device_id: str) -> EnergySpecification: ...
+    def get_device_status(self, device_id: str) -> DeviceStatus: ...
+    def get_devices_status(self, device_ids: list[str]) -> dict[str, DeviceStatus]: ...
 
 
 class SettingsStore(Protocol):
@@ -49,4 +58,3 @@ class DevicePreferenceStore(Protocol):
         currency: Currency,
         updated_at_utc: datetime,
     ) -> DevicePricePreference: ...
-

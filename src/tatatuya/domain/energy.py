@@ -35,12 +35,11 @@ def normalize_energy(raw_value: Any, scale: int, unit: str) -> Decimal:
     if not raw_decimal.is_finite():
         _raise_invalid_value(raw_value)
 
-    scaled = raw_decimal / (Decimal(10) ** scale)
     normalized_unit = unit.strip().lower().replace(" ", "")
     if normalized_unit == "kwh":
-        return scaled
+        return _shift_decimal(raw_decimal, scale)
     if normalized_unit == "wh":
-        return scaled / Decimal(1000)
+        return _shift_decimal(raw_decimal, scale + 3)
     raise UserFacingError(
         "Unitate necunoscută",
         "Contorul folosește o unitate de energie care nu este acceptată.",
@@ -55,3 +54,10 @@ def _raise_invalid_value(raw_value: Any) -> None:
         f"raw_value={raw_value!r}",
     )
 
+
+def _shift_decimal(value: Decimal, decimal_places: int) -> Decimal:
+    """Divide by a power of ten by changing the exponent without rounding."""
+    sign, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        raise ValueError("Only finite Decimal values can be shifted")
+    return Decimal((sign, digits, exponent - decimal_places))

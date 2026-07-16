@@ -33,6 +33,9 @@ class ReadingRepository:
                 reading.raw_status_json,
             ),
         )
+        reading_id = cursor.lastrowid
+        if reading_id is None:
+            raise sqlite3.DatabaseError("SQLite did not return a reading ID")
         return Reading(
             device_id=reading.device_id,
             recorded_at_utc=reading.recorded_at_utc,
@@ -42,7 +45,7 @@ class ReadingRepository:
             value_kwh=reading.value_kwh,
             source=reading.source,
             raw_status_json=reading.raw_status_json,
-            id=int(cursor.lastrowid),
+            id=int(reading_id),
         )
 
     def get(self, reading_id: int) -> Reading | None:
@@ -87,4 +90,3 @@ def _map_reading(row: sqlite3.Row) -> Reading:
         source=row["source"],
         raw_status_json=row["raw_status_json"],
     )
-

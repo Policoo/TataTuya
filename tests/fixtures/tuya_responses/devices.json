@@ -1,0 +1,25 @@
+{
+  "success": true,
+  "result": {
+    "last_row_key": "next-page",
+    "has_more": false,
+    "devices": [
+      {
+        "id": "meter-1",
+        "name": "Casa Părinților",
+        "local_key": "must-not-be-persisted",
+        "product_id": "product-1",
+        "product_name": "Contor inteligent",
+        "category": "zndb",
+        "online": true
+      },
+      {
+        "id": "meter-2",
+        "name": "Garaj",
+        "product_id": "product-2",
+        "category": "zndb",
+        "online": false
+      }
+    ]
+  }
+}
