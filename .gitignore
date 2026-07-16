@@ -7,4 +7,5 @@ htmlcov/
 build/
 dist/
 *.sqlite3
-
+.env
+*.log
