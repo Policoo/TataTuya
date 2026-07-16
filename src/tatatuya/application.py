@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import sys
+
 
 def run() -> None:
-    # The Qt presentation is migrated in a later implementation phase. Keeping
-    # this import lazy lets domain and persistence tools run without importing Qt.
-    from gui.app import run as run_legacy_ui
+    # Used by packaging tests to exercise the installed entry point without
+    # opening a window or making a Tuya request.
+    if "--smoke-test" in sys.argv:
+        from tatatuya.ui.app import load_stylesheet
+
+        if not load_stylesheet().strip():
+            raise RuntimeError("The packaged stylesheet is empty")
+        return
+
+    # Keeping this import lazy lets domain and persistence tools run without Qt.
+    from tatatuya.ui.app import run as run_legacy_ui
 
     run_legacy_ui()
-

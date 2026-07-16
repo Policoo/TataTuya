@@ -1,12 +1,12 @@
-"""Interactive terminal tester for tuya_utils.py."""
+"""Interactive terminal tester for the temporary Tuya client."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
 
-import tuya_utils
-from tuya_utils import TuyaAPIError, TuyaClient, TuyaConfigError
+from tatatuya.infrastructure import tuya_legacy
+from tatatuya.infrastructure.tuya_legacy import TuyaAPIError, TuyaClient, TuyaConfigError
 
 
 def print_json(payload: Any) -> None:
@@ -124,7 +124,7 @@ def main() -> None:
     devices: list[dict[str, Any]] = []
 
     print("Tuya terminal tester")
-    print(f"Region: {tuya_utils.REGION}")
+    print(f"Region: {tuya_legacy.REGION}")
     print(f"Base URL: {client.base_url}")
 
     try:
@@ -134,7 +134,7 @@ def main() -> None:
     except (TuyaAPIError, TuyaConfigError) as exc:
         print("\nStartup token request failed.")
         print_error_details(exc)
-        print("You can still use the menu after fixing credentials in tuya_utils.py and rerunning.")
+        print("You can still use the menu after fixing credentials in .env and rerunning.")
     else:
         try:
             print("\nStartup step: list devices")
@@ -194,7 +194,7 @@ def main() -> None:
                 print(f"Region: {client.region}")
                 print(f"Base URL: {client.base_url}")
                 print("Known regions:")
-                for region, url in sorted(tuya_utils.REGION_BASE_URLS.items()):
+                for region, url in sorted(tuya_legacy.REGION_BASE_URLS.items()):
                     print(f"  {region}: {url}")
 
             elif choice in {"q", "quit", "exit"}:

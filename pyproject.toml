@@ -27,6 +27,9 @@ tatatuya = "tatatuya.application:run"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"tatatuya.ui" = ["styles.qss"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

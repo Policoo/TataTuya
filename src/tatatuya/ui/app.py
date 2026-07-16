@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
-from gui.main_window import MainWindow
+from tatatuya.ui.main_window import MainWindow
 
 
 def load_stylesheet() -> str:

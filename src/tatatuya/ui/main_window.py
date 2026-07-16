@@ -16,18 +16,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import tuya_utils
-from gui.components.device_table import DeviceTable
-from gui.components.modal import AppModal
-from gui.formatters import (
+from tatatuya.infrastructure import tuya_legacy
+from tatatuya.ui.components.device_table import DeviceTable
+from tatatuya.ui.components.modal import AppModal
+from tatatuya.ui.formatters import (
     device_id,
     device_name,
     extract_devices,
     flatten_status,
     important_device_fields,
 )
-from gui.workers import ApiWorker
-from tuya_utils import TuyaClient
+from tatatuya.ui.workers import ApiWorker
+from tatatuya.infrastructure.tuya_legacy import TuyaClient
 
 
 class MainWindow(QMainWindow):
@@ -52,7 +52,7 @@ class MainWindow(QMainWindow):
         title_stack = QVBoxLayout()
         title = QLabel("Smart meters")
         title.setObjectName("Title")
-        subtitle = QLabel(f"{tuya_utils.REGION} | {self.client.base_url}")
+        subtitle = QLabel(f"{tuya_legacy.REGION} | {self.client.base_url}")
         subtitle.setObjectName("Subtitle")
         title_stack.addWidget(title)
         title_stack.addWidget(subtitle)

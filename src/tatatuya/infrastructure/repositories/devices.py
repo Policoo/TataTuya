@@ -29,9 +29,21 @@ class DeviceRepository:
                 product_name = excluded.product_name,
                 category = excluded.category,
                 online = excluded.online,
-                energy_code = COALESCE(excluded.energy_code, devices.energy_code),
-                energy_unit = COALESCE(excluded.energy_unit, devices.energy_unit),
-                energy_scale = COALESCE(excluded.energy_scale, devices.energy_scale),
+                energy_code = CASE
+                    WHEN devices.product_id IS NOT excluded.product_id
+                        THEN excluded.energy_code
+                    ELSE COALESCE(excluded.energy_code, devices.energy_code)
+                END,
+                energy_unit = CASE
+                    WHEN devices.product_id IS NOT excluded.product_id
+                        THEN excluded.energy_unit
+                    ELSE COALESCE(excluded.energy_unit, devices.energy_unit)
+                END,
+                energy_scale = CASE
+                    WHEN devices.product_id IS NOT excluded.product_id
+                        THEN excluded.energy_scale
+                    ELSE COALESCE(excluded.energy_scale, devices.energy_scale)
+                END,
                 raw_device_json = excluded.raw_device_json,
                 last_seen_at_utc = excluded.last_seen_at_utc
             """,
@@ -83,4 +95,3 @@ def _map_device(row: sqlite3.Row) -> Device:
         first_seen_at_utc=from_utc_text(row["first_seen_at_utc"]),
         last_seen_at_utc=from_utc_text(row["last_seen_at_utc"]),
     )
-

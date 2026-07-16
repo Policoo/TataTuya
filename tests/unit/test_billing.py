@@ -59,6 +59,24 @@ def test_rejects_reversed_timestamps() -> None:
         )
 
 
+def test_equal_timestamps_use_reading_id_as_order() -> None:
+    result = calculate_period(
+        reading(1, "100", NOW),
+        reading(2, "101", NOW),
+        Decimal("1"), Currency.RON, NOW,
+    )
+    assert result.consumption_kwh == Decimal("1")
+
+
+def test_equal_timestamps_reject_reversed_reading_ids() -> None:
+    with pytest.raises(UserFacingError, match="ulterioară"):
+        calculate_period(
+            reading(2, "100", NOW),
+            reading(1, "101", NOW),
+            Decimal("1"), Currency.RON, NOW,
+        )
+
+
 def test_rejects_readings_from_different_devices() -> None:
     with pytest.raises(UserFacingError, match="aceluiași"):
         calculate_period(

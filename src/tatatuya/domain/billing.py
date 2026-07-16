@@ -48,7 +48,7 @@ def calculate_period(
             "Perioadă invalidă",
             "Selectați două citiri diferite.",
         )
-    if end.recorded_at_utc <= start.recorded_at_utc:
+    if (end.recorded_at_utc, end.id) <= (start.recorded_at_utc, start.id):
         raise UserFacingError(
             "Perioadă invalidă",
             "Citirea finală trebuie să fie ulterioară citirii inițiale.",
@@ -100,4 +100,3 @@ def _invalid_price() -> UserFacingError:
         "Preț invalid",
         "Introduceți un preț pozitiv, de exemplu 0,80.",
     )
-

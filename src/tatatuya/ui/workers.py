@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Signal
 
-from tuya_utils import TuyaAPIError, TuyaConfigError
+from tatatuya.infrastructure.tuya_legacy import TuyaAPIError, TuyaConfigError
 
 
 class ApiWorker(QObject):

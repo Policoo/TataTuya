@@ -1,9 +1,13 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+import sqlite3
+
+import pytest
 
 from tatatuya.domain.billing import calculate_period
 from tatatuya.domain.models import Currency, Device, Reading, TuyaSettings
 from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure import migrations
 from tatatuya.infrastructure.repositories.calculations import (
     CalculationRepository,
     DevicePreferenceRepository,
@@ -39,6 +43,39 @@ def test_empty_database_migrates_idempotently(tmp_path) -> None:
     assert {"settings", "devices", "readings", "calculations"} <= tables
 
 
+def test_failed_migration_is_atomic_and_can_be_retried(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "failed-migration.sqlite3"
+    database = Database(path)
+    broken = "CREATE TABLE partial_change(id INTEGER); CREATE TABLE invalid("
+    monkeypatch.setattr(migrations, "MIGRATIONS", ((1, broken),))
+
+    with pytest.raises(sqlite3.OperationalError):
+        database.initialize()
+
+    with database.connect() as connection:
+        partial_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'partial_change'"
+        ).fetchone()
+        recorded = connection.execute(
+            "SELECT version FROM schema_migrations WHERE version = 1"
+        ).fetchone()
+    assert partial_table is None
+    assert recorded is None
+
+    valid = "CREATE TABLE recovered(id INTEGER);"
+    monkeypatch.setattr(migrations, "MIGRATIONS", ((1, valid),))
+    database.initialize()
+    with database.connect() as connection:
+        recovered = connection.execute(
+            "SELECT name FROM sqlite_master WHERE name = 'recovered'"
+        ).fetchone()
+        versions = connection.execute(
+            "SELECT version FROM schema_migrations"
+        ).fetchall()
+    assert recovered[0] == "recovered"
+    assert [row[0] for row in versions] == [1]
+
+
 def test_settings_survive_new_connection(tmp_path) -> None:
     database = initialized_database(tmp_path)
     settings = TuyaSettings("client", "secret", "uid", "central_europe", Currency.EUR)
@@ -71,6 +108,49 @@ def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:
     assert [item.value_kwh for item in stored] == [Decimal("123.45"), Decimal("123.45")]
     assert updated.name == "Casa Nouă"
     assert updated.first_seen_at_utc == saved_device.first_seen_at_utc
+
+
+def test_product_change_invalidates_cached_energy_specification(tmp_path) -> None:
+    database = initialized_database(tmp_path)
+    with database.connect() as connection:
+        devices = DeviceRepository(connection)
+        devices.upsert(
+            Device(
+                "meter-1", "Casa", product_id="old-product",
+                energy_code="forward_energy_total", energy_unit="kWh", energy_scale=2,
+            ),
+            NOW,
+        )
+        changed = devices.upsert(
+            Device("meter-1", "Casa", product_id="new-product"),
+            NOW + timedelta(seconds=1),
+        )
+
+    assert changed.product_id == "new-product"
+    assert changed.energy_code is None
+    assert changed.energy_unit is None
+    assert changed.energy_scale is None
+
+
+def test_unchanged_product_preserves_cached_energy_specification(tmp_path) -> None:
+    database = initialized_database(tmp_path)
+    with database.connect() as connection:
+        devices = DeviceRepository(connection)
+        devices.upsert(
+            Device(
+                "meter-1", "Casa", product_id="same-product",
+                energy_code="forward_energy_total", energy_unit="kWh", energy_scale=2,
+            ),
+            NOW,
+        )
+        updated = devices.upsert(
+            Device("meter-1", "Casa actualizată", product_id="same-product"),
+            NOW + timedelta(seconds=1),
+        )
+
+    assert updated.energy_code == "forward_energy_total"
+    assert updated.energy_unit == "kWh"
+    assert updated.energy_scale == 2
 
 
 def test_calculation_is_immutable_after_settings_and_preference_changes(tmp_path) -> None:
@@ -115,4 +195,3 @@ def test_failed_transaction_rolls_back(tmp_path) -> None:
         pass
     with database.connect() as connection:
         assert DeviceRepository(connection).get("meter-1") is None
-

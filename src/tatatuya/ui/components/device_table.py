@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.formatters import device_id, device_name, online_label, value_from
+from tatatuya.ui.formatters import device_id, device_name, online_label, value_from
 
 
 class DeviceTable(QTableWidget):

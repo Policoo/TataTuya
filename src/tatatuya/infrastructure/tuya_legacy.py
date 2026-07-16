@@ -1,4 +1,4 @@
-"""Small Tuya OpenAPI helper functions.
+"""Temporary Tuya OpenAPI client used by the compatibility UI.
 
 Local prototype credentials are loaded from the repository's ignored ``.env``
 file. The region must match the data center selected for the Tuya IoT Cloud

@@ -83,6 +83,10 @@ def migrate(connection: sqlite3.Connection) -> None:
         )
         """
     )
+    # executescript() commits pending work before running its script. Commit the
+    # migration ledger deliberately, then place every migration and its marker
+    # inside an explicit transaction embedded in the same script.
+    connection.commit()
     applied = {
         row[0]
         for row in connection.execute("SELECT version FROM schema_migrations")
@@ -90,9 +94,17 @@ def migrate(connection: sqlite3.Connection) -> None:
     for version, sql in MIGRATIONS:
         if version in applied:
             continue
-        connection.executescript(sql)
-        connection.execute(
-            "INSERT INTO schema_migrations(version, applied_at_utc) VALUES (?, ?)",
-            (version, datetime.now(UTC).isoformat()),
-        )
-
+        applied_at = datetime.now(UTC).isoformat().replace("'", "''")
+        script = f"""
+            BEGIN IMMEDIATE;
+            {sql}
+            INSERT INTO schema_migrations(version, applied_at_utc)
+                VALUES ({version}, '{applied_at}');
+            COMMIT;
+        """
+        try:
+            connection.executescript(script)
+        except sqlite3.Error:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
