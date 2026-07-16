@@ -270,7 +270,7 @@ def test_paginated_client_devices_are_all_refreshed(tmp_path) -> None:
     transport = Transport()
     client = TuyaClient(
         TuyaSettings(
-            "client", "secret", "uid", "central_europe", Currency.RON
+            "client", "secret", "central_europe", Currency.RON
         ),
         transport=transport,
         clock_ms=lambda: "1721124000000",

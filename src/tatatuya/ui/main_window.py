@@ -52,6 +52,7 @@ class MainWindow(QMainWindow):
         self.settings_configured = settings_configured
         self.active_threads: list[WorkflowThread] = []
         self._close_when_idle = False
+        self._refresh_when_idle = False
         self.setWindowTitle(text.APP_NAME)
         self.resize(1180, 680)
         self._build_ui()
@@ -59,6 +60,7 @@ class MainWindow(QMainWindow):
         if bootstrap_workflow is not None:
             self.content.setCurrentWidget(self.loading_state)
             self.refresh_button.setEnabled(False)
+            self.settings_button.setEnabled(False)
             self.status_label.setText(text.LOADING_LOCAL_DATA)
         application = QApplication.instance()
         if application is not None:
@@ -182,6 +184,8 @@ class MainWindow(QMainWindow):
         self.bootstrap_workflow = None
         self.set_rows(payload.rows)
         self.status_label.setText(text.READY)
+        if payload.settings_configured and payload.refresh_workflow is not None:
+            self._schedule_refresh()
 
     def _bootstrap_failed(self, error: UserFacingError) -> None:
         self.content.setCurrentWidget(self.local_data_error_state)
@@ -216,6 +220,31 @@ class MainWindow(QMainWindow):
             self._operation_failed,
         )
 
+    def apply_settings(
+        self,
+        refresh_workflow: Callable[[], list[DeviceRefreshResult]],
+        *,
+        connection_verified: bool = False,
+        refresh_when_verified: bool = False,
+    ) -> None:
+        """Enable configured behavior immediately after settings are saved."""
+        self.settings_configured = True
+        self.refresh_workflow = refresh_workflow
+        self.set_rows(list(self.table.rows))
+        self.status_label.setText(
+            text.SETTINGS_SAVED_VERIFIED
+            if connection_verified
+            else text.SETTINGS_SAVED_UNVERIFIED
+        )
+        if connection_verified and refresh_when_verified:
+            self._schedule_refresh()
+
+    def _schedule_refresh(self) -> None:
+        if self.active_threads:
+            self._refresh_when_idle = True
+            return
+        QTimer.singleShot(0, self.refresh_devices)
+
     def _refresh_succeeded(self, payload: object) -> None:
         results = list(payload) if isinstance(payload, list) else []
         rows = [
@@ -243,12 +272,16 @@ class MainWindow(QMainWindow):
         success_handler: Callable[[object], None],
         failure_handler: Callable[[UserFacingError], None],
     ) -> None:
-        thread = WorkflowThread(call, self)
+        self.settings_button.setEnabled(False)
+        # The worker lifetime is tracked explicitly in active_threads. Keeping
+        # it parentless avoids a deferred-delete race if the window closes just
+        # after a finished worker has scheduled deleteLater().
+        thread = WorkflowThread(call)
         thread.succeeded.connect(success_handler)
         thread.failed.connect(failure_handler)
         thread.finished.connect(self._operation_finished)
-        thread.finished.connect(lambda: self._forget_thread(thread))
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._worker_finished(thread))
         self.active_threads.append(thread)
         thread.start()
 
@@ -256,12 +289,16 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(
             self.bootstrap_workflow is None and not self._close_when_idle
         )
+        self.settings_button.setEnabled(not self._close_when_idle)
 
-    def _forget_thread(self, thread: WorkflowThread) -> None:
+    def _worker_finished(self, thread: WorkflowThread) -> None:
         if thread in self.active_threads:
             self.active_threads.remove(thread)
         if self._close_when_idle and not self.active_threads:
             QTimer.singleShot(0, self.close)
+        elif self._refresh_when_idle and not self.active_threads:
+            self._refresh_when_idle = False
+            QTimer.singleShot(0, self.refresh_devices)
 
     def shutdown_workers(self) -> None:
         """Finish owned threads before QApplication tears down their QObjects."""

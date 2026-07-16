@@ -31,7 +31,7 @@ NO_METERS = "Nu există contoare disponibile."
 NO_METERS_HELP = "Apăsați Actualizează pentru a încărca dispozitivele din Tuya."
 SETTINGS_REQUIRED = "Configurați conexiunea Tuya"
 SETTINGS_REQUIRED_HELP = (
-    "Introduceți Client ID, Client Secret, Account UID și regiunea în Setări."
+    "Introduceți Client ID, Client Secret și regiunea în Setări."
 )
 OPEN_SETTINGS = "Deschide Setări"
 UNKNOWN = "Necunoscută"
@@ -41,3 +41,18 @@ NO_READING = "Fără citire"
 CLOSING_AFTER_WORK = "Se finalizează operațiunea înainte de închidere…"
 METERS_COUNT = "{count} contoare"
 ONE_METER = "1 contor"
+
+SETTINGS_SUBTITLE = (
+    "Configurați accesul numai pentru citire la Tuya și moneda folosită pentru calcule."
+)
+SETTINGS_NOT_TESTED = "Conexiunea nu a fost testată în această sesiune."
+SETTINGS_CHANGED_AFTER_TEST = "Datele s-au schimbat. Testați din nou conexiunea."
+TEST_CONNECTION = "Testează conexiunea"
+TESTING_CONNECTION = "Se testează conexiunea Tuya…"
+CONNECTION_SUCCEEDED = "Conexiune reușită. {count} dispozitive disponibile."
+CONNECTION_SUCCEEDED_ONE = "Conexiune reușită. 1 dispozitiv disponibil."
+CONNECTION_FAILED = "Conexiunea nu a putut fi verificată."
+SETTINGS_SAVED_VERIFIED = "Setări salvate și conexiune verificată"
+SETTINGS_SAVED_UNVERIFIED = "Setări salvate; conexiune neverificată"
+SAVE = "Salvează"
+CLOSE = "Închide"

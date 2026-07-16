@@ -71,6 +71,12 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ON calculations(device_id, created_at_utc);
         """,
     ),
+    (
+        2,
+        """
+        DELETE FROM settings WHERE key = 'tuya.account_uid';
+        """,
+    ),
 )
 
 

@@ -112,12 +112,13 @@ Acceptance:
 
 ## Phase 7: Settings
 
-- [ ] Build Tuya credential and region fields.
-- [ ] Build the RON/EUR currency selector.
-- [ ] Implement explicit connection testing.
-- [ ] Persist settings only through the settings service/repository.
-- [ ] Show clear missing-settings, success, and failure states.
-- [ ] Ensure there is no setup wizard.
+- [x] Build Tuya credential and region fields.
+- [x] Build the RON/EUR currency selector.
+- [x] Implement explicit connection testing.
+- [x] Persist settings only through the settings service/repository.
+- [x] Show clear missing-settings, success, and failure states.
+- [x] Ensure there is no setup wizard.
+- [x] Refresh once on configured startup and after a verified settings save.
 
 Acceptance:
 

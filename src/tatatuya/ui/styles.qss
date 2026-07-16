@@ -161,3 +161,81 @@ QScrollArea {
 QDialogButtonBox QPushButton {
     min-width: 82px;
 }
+
+QLineEdit,
+QComboBox {
+    background: #ffffff;
+    color: #101828;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+QLineEdit:focus,
+QComboBox:focus {
+    border-color: #1f6feb;
+}
+
+QLabel#SettingsFieldLabel {
+    color: #344054;
+    font-size: 13px;
+}
+
+QComboBox {
+    padding-right: 36px;
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 30px;
+    border: 0;
+    border-left: 1px solid #e2e8f0;
+}
+
+QComboBox::down-arrow {
+    image: url(__TATATUYA_DOWN_ARROW__);
+    width: 10px;
+    height: 6px;
+}
+
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    color: #101828;
+    border: 1px solid #cbd5e1;
+    outline: 0;
+    selection-background-color: #dbeafe;
+    selection-color: #101828;
+}
+
+QFrame#ComboPopup {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    padding: 0;
+}
+
+QComboBox QAbstractItemView::item {
+    color: #101828;
+    padding: 7px 10px;
+    font-size: 13px;
+}
+
+QComboBox QAbstractItemView::item:hover,
+QComboBox QAbstractItemView::item:selected {
+    background: #dbeafe;
+    color: #101828;
+}
+
+QLabel#SettingsFeedback {
+    color: #667085;
+    font-size: 13px;
+}
+
+QLabel#SettingsFeedback[state="success"] {
+    color: #157347;
+}
+
+QLabel#SettingsFeedback[state="error"] {
+    color: #b42318;
+}

@@ -39,7 +39,7 @@ def test_empty_database_migrates_idempotently(tmp_path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert [row[0] for row in versions] == [1]
+    assert [row[0] for row in versions] == [1, 2]
     assert {"settings", "devices", "readings", "calculations"} <= tables
 
 
@@ -78,11 +78,29 @@ def test_failed_migration_is_atomic_and_can_be_retried(tmp_path, monkeypatch) ->
 
 def test_settings_survive_new_connection(tmp_path) -> None:
     database = initialized_database(tmp_path)
-    settings = TuyaSettings("client", "secret", "uid", "central_europe", Currency.EUR)
+    settings = TuyaSettings("client", "secret", "central_europe", Currency.EUR)
     with database.connect() as connection:
         SettingsRepository(connection).save_tuya(settings, NOW)
     with database.connect() as connection:
         assert SettingsRepository(connection).load_tuya() == settings
+
+
+def test_upgrade_removes_obsolete_account_uid_setting(tmp_path, monkeypatch) -> None:
+    database = Database(tmp_path / "upgrade.sqlite3")
+    all_migrations = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations[:1])
+    database.initialize()
+    with database.connect() as connection:
+        SettingsRepository(connection).set("tuya.account_uid", "obsolete-uid", NOW)
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations)
+    database.initialize()
+    with database.connect() as connection:
+        assert SettingsRepository(connection).get("tuya.account_uid") is None
+        versions = connection.execute(
+            "SELECT version FROM schema_migrations ORDER BY version"
+        ).fetchall()
+    assert [row[0] for row in versions] == [1, 2]
 
 
 def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:

@@ -108,6 +108,11 @@ depend on fixed control heights.
 7. Store one new reading per successful device result.
 8. Update the device table.
 
+When the application starts with complete saved settings, it performs this
+refresh once after showing cached local data. Saving settings immediately after
+a successful connection test also performs one refresh. TataTuya does not poll
+periodically or refresh in the background while the application is closed.
+
 Every successful status call creates a reading, including calls that return the
 same value as the preceding reading. A failed or offline device retains its most
 recent saved reading but receives no new entry.
@@ -231,7 +236,6 @@ There is no first-run wizard. Settings contains:
 
 - Client ID
 - Client Secret
-- Account UID
 - Region dropdown
 - `Testează conexiunea`
 - `Salvează`

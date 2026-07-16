@@ -19,7 +19,7 @@ from tatatuya.infrastructure.tuya.client import (
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "tuya_responses"
 SETTINGS = TuyaSettings(
-    "client-id", "super-secret", "account-uid", "central_europe", Currency.RON
+    "client-id", "super-secret", "central_europe", Currency.RON
 )
 
 
@@ -60,6 +60,9 @@ def test_endpoints_use_settings_and_return_typed_values() -> None:
 
     query = parse_qs(urlsplit(transport.requests[0].url).query)
     assert query == {}
+    assert transport.requests[0].url == (
+        "https://openapi.tuyaeu.com/v1.0/iot-01/associated-users/devices"
+    )
     assert transport.requests[1].url.endswith("/devices/meter-1/specification")
     assert transport.requests[2].url.endswith("/devices/meter-1/status")
 

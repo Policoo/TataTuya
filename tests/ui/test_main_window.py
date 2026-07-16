@@ -9,14 +9,18 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
-from tatatuya.domain.models import Device, Reading
+from tatatuya.domain.models import Currency, Device, Reading, TuyaSettings
+from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.repositories.settings import SettingsRepository
 from tatatuya.services.reading_service import DeviceRefreshResult
 from tatatuya.ui import text
 from tatatuya.ui.app import create_main_window, load_stylesheet
 from tatatuya.ui.components.device_table import DeviceTableRow
+from tatatuya.ui.dialogs.settings import SavedSettings
 from tatatuya.ui.main_window import InitialState, MainWindow
 
 
@@ -151,6 +155,21 @@ def test_refresh_failure_restores_controls_and_emits_safe_error() -> None:
     window.close()
 
 
+def test_saved_settings_do_not_look_verified_without_a_matching_test() -> None:
+    qt_app = app()
+    window = MainWindow(settings_configured=False)
+    window.show()
+
+    window.apply_settings(lambda: [], connection_verified=False)
+    qt_app.processEvents()
+    assert window.settings_configured
+    assert window.status_label.text() == text.SETTINGS_SAVED_UNVERIFIED
+
+    window.apply_settings(lambda: [], connection_verified=True)
+    assert window.status_label.text() == text.SETTINGS_SAVED_VERIFIED
+    window.close()
+
+
 def test_close_during_refresh_waits_for_worker_without_destroying_thread() -> None:
     qt_app = app()
     started = threading.Event()
@@ -243,6 +262,143 @@ def test_delayed_bootstrap_shows_neutral_loading_state() -> None:
     window.close()
 
 
+def test_configured_startup_refreshes_once_and_displays_fresh_reading() -> None:
+    qt_app = app()
+    calls = 0
+    fresh_row = representative_row()
+
+    def refresh():
+        nonlocal calls
+        calls += 1
+        return [
+            DeviceRefreshResult(
+                fresh_row.device,
+                fresh_row.latest_reading,
+                fresh_row.latest_reading,
+            )
+        ]
+
+    window = MainWindow(
+        bootstrap_workflow=lambda: InitialState([], True, refresh)
+    )
+    window.show()
+    window.load_initial_state()
+    deadline = time.monotonic() + 2
+    while (calls == 0 or window.active_threads) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    assert calls == 1
+    assert window.table.rowCount() == 1
+    assert window.table.rows[0].latest_reading == fresh_row.latest_reading
+    assert window.status_label.text() == text.REFRESH_COMPLETE
+
+    end = time.monotonic() + 0.05
+    while time.monotonic() < end:
+        qt_app.processEvents()
+    assert calls == 1
+    window.close()
+
+
+def test_verified_settings_save_triggers_one_refresh_but_untested_save_does_not() -> None:
+    qt_app = app()
+    calls = 0
+    row = representative_row()
+
+    def refresh():
+        nonlocal calls
+        calls += 1
+        return [DeviceRefreshResult(row.device, row.latest_reading, row.latest_reading)]
+
+    window = MainWindow(settings_configured=False)
+    window.show()
+    window.apply_settings(
+        refresh,
+        connection_verified=False,
+        refresh_when_verified=True,
+    )
+    qt_app.processEvents()
+    assert calls == 0
+
+    window.apply_settings(
+        refresh,
+        connection_verified=True,
+        refresh_when_verified=True,
+    )
+    deadline = time.monotonic() + 2
+    while (calls == 0 or window.active_threads) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    assert calls == 1
+    assert window.table.rowCount() == 1
+    assert window.status_label.text() == text.REFRESH_COMPLETE
+    window.close()
+
+
+def test_verified_dialog_save_refreshes_only_after_settings_commit(
+    tmp_path, monkeypatch
+) -> None:
+    qt_app = app()
+    database = Database(tmp_path / "tatatuya.sqlite3")
+    settings = TuyaSettings(
+        "client", "secret", "central_europe", Currency.RON
+    )
+    refresh_observations = []
+    row = representative_row()
+
+    class FakeSettingsDialog(QObject):
+        error_raised = Signal(object)
+        settings_saved = Signal(object)
+
+        def __init__(self, service, regions, parent=None):
+            super().__init__(parent)
+            self.service = service
+
+        def exec(self):
+            saved = self.service.save(settings)
+            self.settings_saved.emit(SavedSettings(saved, True))
+
+    def initial_state(db):
+        db.initialize()
+        return InitialState([], False, None)
+
+    def refresh(db, active_settings):
+        with db.connect() as connection:
+            persisted = SettingsRepository(connection).load_tuya()
+        refresh_observations.append((active_settings, persisted))
+        return [DeviceRefreshResult(row.device, row.latest_reading, row.latest_reading)]
+
+    monkeypatch.setattr("tatatuya.ui.app.SettingsDialog", FakeSettingsDialog)
+    monkeypatch.setattr("tatatuya.ui.app._load_initial_state", initial_state)
+    monkeypatch.setattr("tatatuya.ui.app._refresh_workflow", refresh)
+
+    window = create_main_window(database)
+    window.show()
+    deadline = time.monotonic() + 2
+    while (
+        window.bootstrap_workflow is not None or window.active_threads
+    ) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    window.settings_requested.emit()
+    deadline = time.monotonic() + 2
+    while (
+        not refresh_observations or window.active_threads
+    ) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    assert refresh_observations == [(settings, settings)]
+    assert window.table.rowCount() == 1
+    window.close()
+
+
 def test_failed_bootstrap_shows_local_error_and_retry_recovers() -> None:
     qt_app = app()
     attempts = 0
@@ -286,9 +442,15 @@ def test_failed_bootstrap_shows_local_error_and_retry_recovers() -> None:
         qt_app.processEvents()
         time.sleep(0.005)
     qt_app.processEvents()
+    while (
+        window.status_label.text() != text.REFRESH_COMPLETE
+        or window.active_threads
+    ) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
     assert attempts == 2
     assert window.content.currentWidget() is window.empty_state
-    assert window.status_label.text() == text.READY
+    assert window.status_label.text() == text.REFRESH_COMPLETE
     assert window.refresh_button.isEnabled()
     window.close()
 

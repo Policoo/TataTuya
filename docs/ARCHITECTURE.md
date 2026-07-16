@@ -142,7 +142,8 @@ value TEXT NOT NULL
 updated_at_utc TEXT NOT NULL
 ```
 
-Stores Tuya Client ID, Client Secret, Account UID, region, and selected currency.
+Stores Tuya Client ID, Client Secret, region, and selected currency. Migration 2
+removes the obsolete `tuya.account_uid` setting from existing databases.
 
 ### `devices`
 
@@ -234,6 +235,12 @@ The Tuya client receives credentials from `settings_service`; production code
 does not depend on module-level credential constants. Settings remain in SQLite
 for this version.
 
+The explicit Settings connection test authenticates and verifies access to the
+read-only associated-device listing used by the normal refresh workflow. It does
+not require unrelated Tuya API products or permissions. Client ID, Client Secret,
+and region form the connection-settings identity; changing only the local billing
+currency does not invalidate a successful connection test.
+
 ### Device discovery
 
 Discovery updates cached device metadata without mutating Tuya. A disappeared
@@ -288,6 +295,10 @@ load settings
   -> normalize and store successful readings
   -> return per-device results and failures
 ```
+
+The UI starts this workflow once after configured application bootstrap and once
+after saving a connection that was successfully verified. Cached rows remain
+visible while it runs. There is no periodic timer.
 
 ### Individual status workflow
 

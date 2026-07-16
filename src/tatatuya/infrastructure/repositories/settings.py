@@ -11,7 +11,6 @@ from tatatuya.infrastructure.repositories._mapping import to_utc_text
 
 SETTING_CLIENT_ID = "tuya.client_id"
 SETTING_CLIENT_SECRET = "tuya.client_secret"
-SETTING_ACCOUNT_UID = "tuya.account_uid"
 SETTING_REGION = "tuya.region"
 SETTING_CURRENCY = "application.currency"
 
@@ -42,7 +41,6 @@ class SettingsRepository:
         values = {
             SETTING_CLIENT_ID: settings.client_id,
             SETTING_CLIENT_SECRET: settings.client_secret,
-            SETTING_ACCOUNT_UID: settings.account_uid,
             SETTING_REGION: settings.region,
             SETTING_CURRENCY: settings.currency.value,
         }
@@ -56,7 +54,6 @@ class SettingsRepository:
             for key in (
                 SETTING_CLIENT_ID,
                 SETTING_CLIENT_SECRET,
-                SETTING_ACCOUNT_UID,
                 SETTING_REGION,
                 SETTING_CURRENCY,
             )
@@ -64,7 +61,6 @@ class SettingsRepository:
         required = (
             values[SETTING_CLIENT_ID],
             values[SETTING_CLIENT_SECRET],
-            values[SETTING_ACCOUNT_UID],
             values[SETTING_REGION],
         )
         if not any(required):
@@ -72,8 +68,6 @@ class SettingsRepository:
         return TuyaSettings(
             client_id=values[SETTING_CLIENT_ID] or "",
             client_secret=values[SETTING_CLIENT_SECRET] or "",
-            account_uid=values[SETTING_ACCOUNT_UID] or "",
             region=values[SETTING_REGION] or "",
             currency=Currency(values[SETTING_CURRENCY] or Currency.RON.value),
         )
-

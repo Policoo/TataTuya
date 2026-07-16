@@ -28,7 +28,7 @@ tatatuya = "tatatuya.application:run"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"tatatuya.ui" = ["styles.qss"]
+"tatatuya.ui" = ["styles.qss", "icons/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

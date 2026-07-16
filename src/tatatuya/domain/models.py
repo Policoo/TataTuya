@@ -18,7 +18,6 @@ class Currency(StrEnum):
 class TuyaSettings:
     client_id: str
     client_secret: str
-    account_uid: str
     region: str
     currency: Currency = Currency.RON
 
@@ -26,7 +25,7 @@ class TuyaSettings:
     def is_complete(self) -> bool:
         return all(
             value.strip()
-            for value in (self.client_id, self.client_secret, self.account_uid, self.region)
+            for value in (self.client_id, self.client_secret, self.region)
         )
 
 
