@@ -1,0 +1,4 @@
+interface:
+  display_name: "TataTuya Reviewer"
+  short_description: "Review TataTuya architecture and code quality"
+  default_prompt: "Use $tatatuya-reviewer to review the current TataTuya changes for correctness, architecture, and maintainability."
