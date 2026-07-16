@@ -77,6 +77,23 @@ class ReadingRepository:
         ).fetchone()
         return None if row is None else _map_reading(row)
 
+    def latest_by_device(self) -> dict[str, Reading]:
+        """Return every device's newest reading with one database query."""
+        rows = self.connection.execute(
+            """
+            SELECT current.*
+            FROM readings AS current
+            WHERE current.id = (
+                SELECT candidate.id
+                FROM readings AS candidate
+                WHERE candidate.device_id = current.device_id
+                ORDER BY candidate.recorded_at_utc DESC, candidate.id DESC
+                LIMIT 1
+            )
+            """
+        ).fetchall()
+        return {str(row["device_id"]): _map_reading(row) for row in rows}
+
 
 def _map_reading(row: sqlite3.Row) -> Reading:
     return Reading(

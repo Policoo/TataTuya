@@ -1,31 +1,32 @@
-"""Background workers for Tuya API calls."""
+"""Reusable thread for blocking application workflows."""
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QThread, Signal
 
-from tatatuya.infrastructure.tuya_legacy import TuyaAPIError, TuyaConfigError
+from tatatuya.domain.errors import UserFacingError
 
 
-class ApiWorker(QObject):
+class WorkflowThread(QThread):
     succeeded = Signal(object)
-    failed = Signal(str, dict, object)
-    finished = Signal()
+    failed = Signal(object)
 
-    def __init__(self, call: Callable[[], Any]) -> None:
-        super().__init__()
+    def __init__(self, call: Callable[[], Any], parent=None) -> None:
+        super().__init__(parent)
         self.call = call
 
     def run(self) -> None:
         try:
             self.succeeded.emit(self.call())
-        except (TuyaAPIError, TuyaConfigError) as exc:
-            request_info = exc.request_info if isinstance(exc, TuyaAPIError) else {}
-            response_payload = exc.response_payload if isinstance(exc, TuyaAPIError) else None
-            self.failed.emit(str(exc), request_info, response_payload)
+        except UserFacingError as exc:
+            self.failed.emit(exc)
         except Exception as exc:
-            self.failed.emit(str(exc), {}, None)
-        finally:
-            self.finished.emit()
+            self.failed.emit(
+                UserFacingError(
+                    "Eroare neașteptată",
+                    "Operațiunea nu a putut fi finalizată. Încercați din nou.",
+                    str(exc),
+                )
+            )

@@ -1,8 +1,8 @@
-"""Device table component."""
+"""Main-window meter table."""
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -10,23 +10,37 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QPushButton,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
 )
 
-from tatatuya.ui.formatters import device_id, device_name, online_label, value_from
+from tatatuya.domain.models import Device, Reading
+from tatatuya.ui import text
+from tatatuya.ui.formatters import format_energy, format_local_datetime, online_label
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceTableRow:
+    device: Device
+    latest_reading: Reading | None = None
+    error_message: str | None = None
 
 
 class DeviceTable(QTableWidget):
-    details_requested = Signal(dict)
-    status_requested = Signal(dict)
+    calculate_requested = Signal(object)
+    history_requested = Signal(object)
+    info_requested = Signal(object)
+    status_requested = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(0, 6, parent)
-        self.devices: list[dict[str, Any]] = []
-
-        self.setHorizontalHeaderLabels(["Name", "Device ID", "Category", "Product", "Status", "Actions"])
+        super().__init__(0, 5, parent)
+        self.rows: list[DeviceTableRow] = []
+        self.setObjectName("DeviceTable")
+        self.setHorizontalHeaderLabels(
+            [text.METER, text.STATE, text.CURRENT_READING, text.LAST_READING, text.ACTIONS]
+        )
         self.verticalHeader().setVisible(False)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -35,57 +49,75 @@ class DeviceTable(QTableWidget):
         self.setShowGrid(False)
 
         header = self.horizontalHeader()
-        header.setStretchLastSection(False)
+        # The state column stays compact; recoverable details live in its
+        # tooltip. This leaves the flexible width for the Tuya-owned meter name.
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(1, 4):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
 
-    def set_devices(self, devices: list[dict[str, Any]]) -> None:
-        self.devices = devices
-        self.setRowCount(len(devices))
-
-        for row, device in enumerate(devices):
-            self._set_text(row, 0, device_name(device))
-            self._set_text(row, 1, device_id(device) or "-")
-            self._set_text(row, 2, value_from(device, "category"))
-            self._set_text(row, 3, value_from(device, "product_name", "product_id"))
-            self._set_text(row, 4, online_label(device.get("online")))
-            actions = RowActions(device, self)
-            self.setCellWidget(row, 5, actions)
-
-            # QTableWidget does not reliably include cell widgets when sizing
-            # rows. Use the action layout's real styled size instead of a
-            # hard-coded height.
+    def set_rows(self, rows: list[DeviceTableRow]) -> None:
+        self.rows = rows
+        self.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            name_item = QTableWidgetItem(row.device.name)
+            name_item.setToolTip(row.device.name)
+            self.setItem(row_index, 0, name_item)
+            state = online_label(row.device.online)
+            state_item = QTableWidgetItem(state)
+            if row.error_message:
+                state_item.setToolTip(row.error_message)
+            self.setItem(row_index, 1, state_item)
+            self.setItem(
+                row_index,
+                2,
+                QTableWidgetItem(
+                    format_energy(row.latest_reading.value_kwh)
+                    if row.latest_reading
+                    else text.NO_READING
+                ),
+            )
+            self.setItem(
+                row_index,
+                3,
+                QTableWidgetItem(
+                    format_local_datetime(row.latest_reading.recorded_at_utc)
+                    if row.latest_reading
+                    else "—"
+                ),
+            )
+            actions = RowActions(row.device, self)
+            self.setCellWidget(row_index, 4, actions)
             actions.ensurePolished()
-            self.setRowHeight(row, actions.sizeHint().height())
+            separator = self.style().pixelMetric(QStyle.PixelMetric.PM_DefaultFrameWidth)
+            self.setRowHeight(row_index, actions.sizeHint().height() + separator)
 
-        if devices:
-            self.selectRow(0)
-
-    def _set_text(self, row: int, column: int, value: str) -> None:
-        item = QTableWidgetItem(value)
-        self.setItem(row, column, item)
+        if rows:
+            # The stylesheet gives table cells 12 px of padding on each side.
+            # Derive the action column from its styled contents plus that inset.
+            actions_width = max(
+                self.cellWidget(index, 4).sizeHint().width()
+                for index in range(len(rows))
+            )
+            self.setColumnWidth(4, actions_width + 24)
 
 
 class RowActions(QWidget):
-    def __init__(self, device: dict[str, Any], table: DeviceTable) -> None:
+    def __init__(self, device: Device, table: DeviceTable) -> None:
         super().__init__(table)
-        self.device = device
-        self.table = table
-
-        details_button = QPushButton("Details")
-        details_button.setObjectName("GhostButton")
-        details_button.clicked.connect(lambda: self.table.details_requested.emit(self.device))
-
-        status_button = QPushButton("Status")
-        status_button.setObjectName("GhostButton")
-        status_button.clicked.connect(lambda: self.table.status_requested.emit(self.device))
-
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(6)
-        layout.addWidget(details_button)
-        layout.addWidget(status_button)
+        # QTableWidget applies its own horizontal cell inset. Keeping the inner
+        # layout flush prevents the last action from being compressed or clipped.
+        layout.setContentsMargins(0, 3, 0, 3)
+        layout.setSpacing(2)
+        actions = (
+            (text.CALCULATE, table.calculate_requested),
+            (text.HISTORY, table.history_requested),
+            (text.INFO, table.info_requested),
+            (text.STATUS, table.status_requested),
+        )
+        for label, signal in actions:
+            button = QPushButton(label)
+            button.setObjectName("RowActionButton")
+            button.clicked.connect(lambda checked=False, s=signal: s.emit(device))
+            layout.addWidget(button)

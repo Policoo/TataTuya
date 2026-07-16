@@ -110,6 +110,32 @@ def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:
     assert updated.first_seen_at_utc == saved_device.first_seen_at_utc
 
 
+def test_latest_readings_for_all_devices_uses_timestamp_then_id(tmp_path) -> None:
+    database = initialized_database(tmp_path)
+    with database.connect() as connection:
+        devices = DeviceRepository(connection)
+        readings = ReadingRepository(connection)
+        for device_id in ("meter-1", "meter-2", "meter-empty"):
+            devices.upsert(Device(device_id, device_id), NOW)
+        readings.add(
+            Reading("meter-1", NOW, "100", 0, "kWh", Decimal("100"), "batch", "{}")
+        )
+        readings.add(
+            Reading("meter-1", NOW, "101", 0, "kWh", Decimal("101"), "batch", "{}")
+        )
+        readings.add(
+            Reading(
+                "meter-2", NOW + timedelta(hours=1), "200", 0, "kWh",
+                Decimal("200"), "batch", "{}",
+            )
+        )
+        latest = readings.latest_by_device()
+
+    assert set(latest) == {"meter-1", "meter-2"}
+    assert latest["meter-1"].value_kwh == Decimal("101")
+    assert latest["meter-2"].value_kwh == Decimal("200")
+
+
 def test_product_change_invalidates_cached_energy_specification(tmp_path) -> None:
     database = initialized_database(tmp_path)
     with database.connect() as connection:

@@ -94,13 +94,13 @@ Acceptance:
 
 ## Phase 6: Romanian application shell and main table
 
-- [ ] Build the main window, top bar, empty/settings-required state, and table.
-- [ ] Add `Actualizează`, `Setări`, and row actions.
-- [ ] Connect refresh through non-blocking workers.
-- [ ] Display the latest saved reading while offline or during recoverable errors.
-- [ ] Centralize Romanian strings and display formatting.
-- [ ] Establish styles without hard-coded control heights.
-- [ ] Add UI geometry tests and render a representative screenshot.
+- [x] Build the main window, top bar, empty/settings-required state, and table.
+- [x] Add `Actualizează`, `Setări`, and row actions.
+- [x] Connect refresh through non-blocking workers.
+- [x] Display the latest saved reading while offline or during recoverable errors.
+- [x] Centralize Romanian strings and display formatting.
+- [x] Establish styles without hard-coded control heights.
+- [x] Add UI geometry tests and render a representative screenshot.
 
 Acceptance:
 
