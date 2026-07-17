@@ -4,8 +4,10 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QPushButton
 
 from tatatuya.domain.models import Calculation, Currency, Device, Reading
 from tatatuya.services.history_service import (
@@ -100,6 +102,23 @@ def test_history_dialog_renders_read_only_tabs_and_full_calculation_details(
 
     assert not dialog.readings_table.editTriggers()
     assert not dialog.calculations_table.editTriggers()
+    assert (
+        dialog.readings_table.selectionMode()
+        is QAbstractItemView.SelectionMode.NoSelection
+    )
+    assert (
+        dialog.calculations_table.selectionMode()
+        is QAbstractItemView.SelectionMode.NoSelection
+    )
+    reading_item = dialog.readings_table.item(0, 0)
+    assert reading_item is not None
+    QTest.mouseClick(
+        dialog.readings_table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=dialog.readings_table.visualItemRect(reading_item).center(),
+    )
+    assert dialog.readings_table.selectedItems() == []
+    assert dialog.calculations_table.selectedItems() == []
     button_texts = [button.text() for button in dialog.findChildren(QPushButton)]
     assert text.CLOSE in button_texts
     assert "Șterge" not in button_texts

@@ -47,6 +47,10 @@ def format_local_datetime(value: datetime) -> str:
     return local.strftime("%d.%m.%Y, %H:%M")
 
 
+def format_local_date(value: datetime) -> str:
+    return value.astimezone().strftime("%d.%m.%Y")
+
+
 def format_reading_option(value: Decimal, recorded_at_utc: datetime) -> str:
     return f"{format_local_datetime(recorded_at_utc)} — {format_energy(value)}"
 

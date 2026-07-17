@@ -53,8 +53,7 @@ class DeviceTable(QTableWidget):
             [text.METER, text.STATE, text.CURRENT_READING, text.LAST_READING, text.ACTIONS]
         )
         self.verticalHeader().setVisible(False)
-        self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setShowGrid(False)

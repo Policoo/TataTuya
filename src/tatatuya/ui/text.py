@@ -66,7 +66,13 @@ COPY_TECHNICAL_DETAILS = "Copiază detaliile"
 TECHNICAL_DETAILS = "Detalii tehnice"
 
 CALCULATION_TITLE = "Calcul consum"
-CALCULATION_SUBTITLE = "Alegeți două citiri salvate pentru acest contor."
+CALCULATION_SUBTITLE = (
+    "Alegeți mai întâi data, apoi citirea exactă pentru începutul și sfârșitul perioadei."
+)
+DATE = "Data"
+EXACT_READING = "Citire exactă"
+PERIOD_START = "Început"
+PERIOD_END = "Sfârșit"
 START_READING = "Citire inițială"
 END_READING = "Citire finală"
 START_VALUE = "Index inițial"

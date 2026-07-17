@@ -4,7 +4,9 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Device, DeviceStatus, Reading, StatusValue
@@ -64,6 +66,16 @@ def test_status_preserves_raw_codes_and_reports_captured_reading(tmp_path) -> No
     assert switch_code is not None and switch_code.text() == "switch_1"
     assert switch_value is not None and switch_value.text() == "false"
     assert not dialog.status_table.editTriggers()
+    assert (
+        dialog.status_table.selectionMode()
+        is QAbstractItemView.SelectionMode.NoSelection
+    )
+    QTest.mouseClick(
+        dialog.status_table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=dialog.status_table.visualItemRect(energy_code).center(),
+    )
+    assert dialog.status_table.selectedItems() == []
     assert dialog.capture_feedback.text() == text.STATUS_READING_SAVED.format(
         reading="1.234,56 kWh"
     )

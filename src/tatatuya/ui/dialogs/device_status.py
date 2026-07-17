@@ -67,11 +67,8 @@ class DeviceStatusDialog(QDialog):
             [text.TUYA_CODE, text.TUYA_VALUE]
         )
         self.status_table.verticalHeader().setVisible(False)
-        self.status_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
         self.status_table.setSelectionMode(
-            QAbstractItemView.SelectionMode.SingleSelection
+            QAbstractItemView.SelectionMode.NoSelection
         )
         self.status_table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers

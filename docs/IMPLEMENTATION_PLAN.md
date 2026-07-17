@@ -105,6 +105,7 @@ Acceptance:
 - [x] Display the latest saved reading while offline or during recoverable errors.
 - [x] Centralize Romanian strings and display formatting.
 - [x] Establish styles without hard-coded control heights.
+- [x] Keep informational meter-table cells non-selectable.
 - [x] Add UI geometry tests and render a representative screenshot.
 
 Acceptance:
@@ -134,6 +135,9 @@ Acceptance:
 ## Phase 8: Calculation workflow
 
 - [x] Build timestamped start/end reading selectors.
+- [x] Filter start/end readings by a separately selected local date.
+- [x] Group each date beside its exact reading in start/end rows.
+- [x] Limit selector popups to 15 visible entries before scrolling.
 - [x] Default to newest ending reading and the last calculation's ending reading
   as the next start, falling back to the earliest reading.
 - [x] Show the per-meter prior price as faded fallback text.
@@ -145,6 +149,8 @@ Acceptance:
 Acceptance:
 
 - Multiple readings on one day are individually selectable by time.
+- Date selection narrows each reading selector without changing persisted IDs.
+- Dense selector popups scroll after 15 visible entries.
 - Comma decimal input works.
 - Old prices are meter-specific and currency-aware.
 - A lower ending meter value opens the custom error modal.
@@ -158,6 +164,8 @@ Acceptance:
 - [x] Add raw Status diagnostics with unchanged Tuya codes.
 - [x] Record energy when Status performs an individual API call.
 - [x] Add empty-history and error-state UI tests.
+- [x] Keep read-only history-table cells non-selectable.
+- [x] Keep the read-only Status diagnostic table non-selectable.
 
 Acceptance:
 

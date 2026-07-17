@@ -118,6 +118,8 @@ def test_defaults_show_individual_timestamps_fallback_and_exact_preview(tmp_path
 
     assert dialog.start_reading.currentData() == 2
     assert dialog.end_reading.currentData() == 3
+    assert dialog.start_date.count() == 1
+    assert dialog.end_date.count() == 1
     assert dialog.start_reading.count() == 3
     assert format_local_datetime(
         READINGS[1].recorded_at_utc
@@ -129,10 +131,104 @@ def test_defaults_show_individual_timestamps_fallback_and_exact_preview(tmp_path
     assert dialog.price.placeholderText() == "Ultimul preț: 0,80 RON"
     assert dialog.consumption_value.text() == "3,00 kWh"
     assert dialog.total_value.text() == "2,40 RON"
+    assert dialog.date_column_label.text() == text.DATE
+    assert dialog.reading_column_label.text() == text.EXACT_READING
+    assert dialog.start_date.geometry().top() == dialog.start_reading.geometry().top()
+    assert dialog.end_date.geometry().top() == dialog.end_reading.geometry().top()
+    assert dialog.start_date.geometry().right() < dialog.start_reading.geometry().left()
+    assert dialog.end_date.geometry().right() < dialog.end_reading.geometry().left()
+    assert dialog.start_date.geometry().bottom() < dialog.end_date.geometry().top()
 
     assert dialog.grab().save(str(tmp_path / "calculation-dialog.png"))
     assert dialog.save_button.width() >= dialog.save_button.sizeHint().width()
     assert dialog.save_button.height() >= dialog.save_button.sizeHint().height()
+    dialog.close()
+
+
+def test_dates_filter_exact_readings_and_large_popup_is_capped(tmp_path) -> None:
+    qt_app = app()
+    first_day = datetime(2026, 12, 3, 8, 0, tzinfo=UTC)
+    dense_readings = {
+        reading_id: Reading(
+            "meter-1",
+            first_day + timedelta(minutes=reading_id - 1),
+            str(100_000 + reading_id),
+            2,
+            "kWh",
+            Decimal(1000) + Decimal(reading_id) / 100,
+            "batch",
+            "{}",
+            reading_id,
+        )
+        for reading_id in range(1, 22)
+    }
+    dense_readings[22] = Reading(
+        "meter-1",
+        first_day + timedelta(days=1),
+        "100022",
+        2,
+        "kWh",
+        Decimal("1000.22"),
+        "batch",
+        "{}",
+        22,
+    )
+    dense_context = CalculationContext(
+        "meter-1",
+        tuple(dense_readings.values()),
+        1,
+        22,
+        Decimal("0.80"),
+        Currency.RON,
+    )
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        dense_context,
+        Service(dense_readings),
+    )
+    dialog.show()
+    qt_app.processEvents()
+
+    assert dialog.start_date.count() == 2
+    assert dialog.end_date.count() == 2
+    assert dialog.start_reading.count() == 21
+    assert dialog.end_reading.count() == 1
+    assert all(
+        combo.maxVisibleItems() == 15
+        for combo in (
+            dialog.start_date,
+            dialog.start_reading,
+            dialog.end_date,
+            dialog.end_reading,
+        )
+    )
+    assert all(
+        combo.isVisible() and not combo.geometry().isEmpty()
+        for combo in (
+            dialog.start_date,
+            dialog.start_reading,
+            dialog.end_date,
+            dialog.end_reading,
+        )
+    )
+    assert dialog.grab().save(str(tmp_path / "calculation-dialog-dense.png"))
+
+    dialog.start_reading.showPopup()
+    qt_app.processEvents()
+    view = dialog.start_reading.view()
+    fourteen_rows_height = sum(view.sizeHintForRow(row) for row in range(14))
+    fifteen_rows_height = sum(view.sizeHintForRow(row) for row in range(15))
+    assert fourteen_rows_height < view.viewport().height() <= fifteen_rows_height
+    assert view.verticalScrollBar().maximum() > 0
+    assert view.window().grab().save(
+        str(tmp_path / "calculation-reading-popup-dense.png")
+    )
+    dialog.start_reading.hidePopup()
+
+    dialog.start_date.setCurrentIndex(1)
+    qt_app.processEvents()
+    assert dialog.start_reading.count() == 1
+    assert dialog.start_reading.currentData() == 22
     dialog.close()
 
 
@@ -232,7 +328,7 @@ def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None
         qt_app.processEvents()
 
         labels = dialog.findChildren(QLabel, "FieldLabel")
-        assert len(labels) == 8
+        assert len(labels) == 10
         assert all(label.isVisible() and not label.geometry().isEmpty() for label in labels)
         assert all(
             label.palette().color(QPalette.ColorRole.WindowText) == QColor("#667085")

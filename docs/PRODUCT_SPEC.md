@@ -95,6 +95,9 @@ Row actions:
 Buttons and rows must size from their styled text and layout. The UI must not
 depend on fixed control heights.
 
+The meter table is informational and does not allow cell or row selection. Its
+buttons remain the only interactive controls inside the table.
+
 `Online` is displayed in green and `Offline` in red. Unknown or unavailable
 states use a neutral or warning treatment rather than implying connectivity.
 
@@ -167,7 +170,9 @@ Rules:
 The calculation dialog displays:
 
 - Meter name
+- Starting-date dropdown
 - Starting-reading dropdown
+- Ending-date dropdown
 - Ending-reading dropdown
 - Starting cumulative value
 - Ending cumulative value
@@ -176,13 +181,19 @@ The calculation dialog displays:
 - Currency
 - Final total
 
-Reading options contain an exact local timestamp and reading, for example:
+The user chooses a local date before choosing the exact reading for that date.
+Changing a date filters its reading dropdown to measurements captured on that
+date. The date and its reading are displayed side by side in clearly labelled
+`Început` and `Sfârșit` rows. Reading options contain an exact local timestamp
+and reading, for example:
 
 ```text
 03.12.2026, 18:42 — 1.234,56 kWh
 ```
 
 Multiple readings on the same day remain separate selectable entries.
+Date and reading dropdowns show at most 15 entries at once and scroll when more
+entries are available.
 
 ### Defaults
 
@@ -227,6 +238,7 @@ A calculation is rejected with a Romanian error when:
 ## 8. History
 
 `Istoric` is a read-only dialog with two tabs.
+Its tables do not allow cell or row selection.
 
 ### `Citiri`
 
@@ -274,6 +286,7 @@ does not modify the device.
 
 `Status` displays translated surrounding UI while preserving raw Tuya status
 codes and values. This makes support possible without hiding technical data.
+Its diagnostic table does not allow cell or row selection.
 
 ## 11. Error experience
 

@@ -389,6 +389,10 @@ are logged locally and wrapped in a generic Romanian message.
   so terminology stays consistent and future translation remains possible.
 - Formatting helpers own Romanian decimal, currency, date, and time display.
 - QSS defines appearance; Qt layouts and content size hints define geometry.
+- Informational tables disable item selection; interaction is provided through
+  explicit controls rather than table-cell state.
+- Calculation reading selectors are filtered by local calendar date in the UI;
+  the service still receives the two persisted reading IDs.
 - Long operations run through reusable Qt worker infrastructure.
 - Settings initialization, loading, connection testing, saving, and commit run
   through worker-owned operations. A Settings dialog never owns a live SQLite
@@ -423,6 +427,9 @@ are logged locally and wrapped in a generic Romanian message.
 - Action buttons have visible text and usable rendered geometry
 - Rows and dialogs fit representative Romanian labels
 - Price fallback is understandable
+- Calculation selectors filter readings by local date and cap popups at 15
+  visible entries before scrolling
+- Informational table cells cannot be selected
 - Custom errors open the shared modal
 - Controls recover after asynchronous errors
 - Main screen is rendered and screenshot-inspected for layout changes

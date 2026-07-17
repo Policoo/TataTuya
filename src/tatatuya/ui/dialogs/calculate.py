@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -27,6 +29,7 @@ from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.formatters import (
     format_decimal,
     format_energy,
+    format_local_date,
     format_money,
     format_reading_option,
 )
@@ -54,11 +57,15 @@ class CalculationDialog(QDialog):
         self._readings = {
             reading.id: reading for reading in context.readings if reading.id is not None
         }
+        self._readings_by_date = self._group_readings_by_local_date(
+            tuple(self._readings.values())
+        )
         self.setWindowTitle(text.CALCULATION_TITLE)
         self.setModal(True)
-        self.resize(720, 570)
+        self.resize(720, 620)
         self._build_ui()
         self._populate_readings()
+        self._connect_signals()
         self._update_preview()
         application = QApplication.instance()
         if application is not None:
@@ -83,20 +90,34 @@ class CalculationDialog(QDialog):
 
         selection_panel = QFrame()
         selection_panel.setObjectName("FieldPanel")
-        form = QFormLayout(selection_panel)
-        form.setContentsMargins(18, 18, 18, 18)
-        form.setHorizontalSpacing(18)
-        form.setVerticalSpacing(12)
-        self.start_reading = PaletteSafeComboBox()
+        selection = QGridLayout(selection_panel)
+        selection.setContentsMargins(18, 18, 18, 18)
+        selection.setHorizontalSpacing(12)
+        selection.setVerticalSpacing(10)
+        selection.setColumnStretch(2, 1)
+        self.start_date = PaletteSafeComboBox(popup_row_limit=15)
+        self.start_date.setObjectName("StartDate")
+        self.start_reading = PaletteSafeComboBox(popup_row_limit=15)
         self.start_reading.setObjectName("StartReading")
-        self.end_reading = PaletteSafeComboBox()
+        self.end_date = PaletteSafeComboBox(popup_row_limit=15)
+        self.end_date.setObjectName("EndDate")
+        self.end_reading = PaletteSafeComboBox(popup_row_limit=15)
         self.end_reading.setObjectName("EndReading")
         self.price = QLineEdit()
         self.price.setObjectName("UnitPrice")
         self.price.setPlaceholderText(text.PRICE_EXAMPLE)
-        form.addRow(self._field_label(text.START_READING), self.start_reading)
-        form.addRow(self._field_label(text.END_READING), self.end_reading)
-        form.addRow(self._field_label(text.PRICE_PER_KWH), self.price)
+        self.date_column_label = self._field_label(text.DATE)
+        self.reading_column_label = self._field_label(text.EXACT_READING)
+        selection.addWidget(self.date_column_label, 0, 1)
+        selection.addWidget(self.reading_column_label, 0, 2)
+        selection.addWidget(self._field_label(text.PERIOD_START), 1, 0)
+        selection.addWidget(self.start_date, 1, 1)
+        selection.addWidget(self.start_reading, 1, 2)
+        selection.addWidget(self._field_label(text.PERIOD_END), 2, 0)
+        selection.addWidget(self.end_date, 2, 1)
+        selection.addWidget(self.end_reading, 2, 2)
+        selection.addWidget(self._field_label(text.PRICE_PER_KWH), 3, 0)
+        selection.addWidget(self.price, 3, 1, 1, 2)
         layout.addWidget(selection_panel)
 
         result_panel = QFrame()
@@ -134,10 +155,6 @@ class CalculationDialog(QDialog):
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
 
-        self.start_reading.currentIndexChanged.connect(self._update_preview)
-        self.end_reading.currentIndexChanged.connect(self._update_preview)
-        self.price.textChanged.connect(self._update_preview)
-
     @staticmethod
     def _result_label(name: str = "CalculationValue") -> QLabel:
         label = QLabel("—")
@@ -151,17 +168,30 @@ class CalculationDialog(QDialog):
         return label
 
     def _populate_readings(self) -> None:
-        for reading in self.context.readings:
-            if reading.id is None:
-                continue
-            option = format_reading_option(reading.value_kwh, reading.recorded_at_utc)
-            self.start_reading.addItem(option, reading.id)
-            self.end_reading.addItem(option, reading.id)
-        self.start_reading.setCurrentIndex(
-            self.start_reading.findData(self.context.default_start_reading_id)
+        for date_key, readings in self._readings_by_date.items():
+            label = format_local_date(readings[0].recorded_at_utc)
+            self.start_date.addItem(label, date_key)
+            self.end_date.addItem(label, date_key)
+
+        start = self._readings[self.context.default_start_reading_id]
+        end = self._readings[self.context.default_end_reading_id]
+        self.start_date.setCurrentIndex(
+            self.start_date.findData(self._local_date_key(start.recorded_at_utc))
         )
-        self.end_reading.setCurrentIndex(
-            self.end_reading.findData(self.context.default_end_reading_id)
+        self.end_date.setCurrentIndex(
+            self.end_date.findData(self._local_date_key(end.recorded_at_utc))
+        )
+        self._populate_reading_combo(
+            self.start_date,
+            self.start_reading,
+            preferred_reading_id=self.context.default_start_reading_id,
+            prefer_latest=False,
+        )
+        self._populate_reading_combo(
+            self.end_date,
+            self.end_reading,
+            preferred_reading_id=self.context.default_end_reading_id,
+            prefer_latest=True,
         )
         if self.context.remembered_unit_price is not None:
             remembered = format_decimal(self.context.remembered_unit_price)
@@ -171,6 +201,79 @@ class CalculationDialog(QDialog):
                     currency=self.context.currency.value,
                 )
             )
+
+    def _connect_signals(self) -> None:
+        self.start_date.currentIndexChanged.connect(self._start_date_changed)
+        self.start_reading.currentIndexChanged.connect(self._update_preview)
+        self.end_date.currentIndexChanged.connect(self._end_date_changed)
+        self.end_reading.currentIndexChanged.connect(self._update_preview)
+        self.price.textChanged.connect(self._update_preview)
+
+    @staticmethod
+    def _local_date_key(recorded_at_utc: datetime) -> str:
+        return recorded_at_utc.astimezone().date().isoformat()
+
+    @classmethod
+    def _group_readings_by_local_date(
+        cls, readings: tuple[Reading, ...]
+    ) -> dict[str, tuple[Reading, ...]]:
+        grouped: dict[str, list[Reading]] = {}
+        ordered = sorted(
+            readings,
+            key=lambda reading: (
+                reading.recorded_at_utc,
+                reading.id if reading.id is not None else -1,
+            ),
+        )
+        for reading in ordered:
+            grouped.setdefault(
+                cls._local_date_key(reading.recorded_at_utc), []
+            ).append(reading)
+        return {key: tuple(values) for key, values in grouped.items()}
+
+    def _populate_reading_combo(
+        self,
+        date_combo: PaletteSafeComboBox,
+        reading_combo: PaletteSafeComboBox,
+        *,
+        preferred_reading_id: int | None,
+        prefer_latest: bool,
+    ) -> None:
+        blocker = QSignalBlocker(reading_combo)
+        reading_combo.clear()
+        readings = self._readings_by_date.get(date_combo.currentData(), ())
+        for reading in readings:
+            if reading.id is not None:
+                reading_combo.addItem(
+                    format_reading_option(
+                        reading.value_kwh, reading.recorded_at_utc
+                    ),
+                    reading.id,
+                )
+        preferred_index = reading_combo.findData(preferred_reading_id)
+        if preferred_index >= 0:
+            reading_combo.setCurrentIndex(preferred_index)
+        elif prefer_latest and reading_combo.count():
+            reading_combo.setCurrentIndex(reading_combo.count() - 1)
+        del blocker
+
+    def _start_date_changed(self, *_args: object) -> None:
+        self._populate_reading_combo(
+            self.start_date,
+            self.start_reading,
+            preferred_reading_id=None,
+            prefer_latest=False,
+        )
+        self._update_preview()
+
+    def _end_date_changed(self, *_args: object) -> None:
+        self._populate_reading_combo(
+            self.end_date,
+            self.end_reading,
+            preferred_reading_id=None,
+            prefer_latest=True,
+        )
+        self._update_preview()
 
     def _selected(self, combo: PaletteSafeComboBox) -> Reading | None:
         return self._readings.get(combo.currentData())
@@ -245,7 +348,9 @@ class CalculationDialog(QDialog):
             QTimer.singleShot(0, self.reject)
 
     def _set_saving(self, saving: bool) -> None:
+        self.start_date.setEnabled(not saving)
         self.start_reading.setEnabled(not saving)
+        self.end_date.setEnabled(not saving)
         self.end_reading.setEnabled(not saving)
         self.price.setEnabled(not saving)
         self.save_button.setEnabled(not saving)

@@ -10,9 +10,10 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QPalette, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import (
@@ -120,6 +121,28 @@ def test_action_text_is_visible_and_rows_fit_styled_buttons(tmp_path) -> None:
     assert screenshot.width() == window.width()
     assert screenshot.height() == window.height()
     assert screenshot_path.stat().st_size > 10_000
+    window.close()
+
+
+def test_main_table_cells_cannot_be_selected() -> None:
+    qt_app = app()
+    window = MainWindow(cached_rows=[representative_row()], settings_configured=True)
+    window.show()
+    qt_app.processEvents()
+
+    item = window.table.item(0, 0)
+    assert item is not None
+    assert (
+        window.table.selectionMode()
+        is QAbstractItemView.SelectionMode.NoSelection
+    )
+    QTest.mouseClick(
+        window.table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=window.table.visualItemRect(item).center(),
+    )
+    qt_app.processEvents()
+    assert window.table.selectedItems() == []
     window.close()
 
 
