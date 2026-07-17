@@ -10,10 +10,9 @@ The phases are ordered to establish testable business behavior before relying on
 the GUI. A phase is complete only when its acceptance checks pass.
 
 Post-Phase-9 checkpoint: the architecture review reopened acceptance for Phases
-1, 4, 5, and 7. The bounded correction work specified in
-`docs/REMEDIATION_PLAN.md` has passed the Phase 9A automated and rendered-UI
-gates. Phase 10 was completed in the same pass because its safe-error work was
-part of the remediation boundary.
+1, 4, 5, and 7. The bounded correction work recorded in Phase 9A has passed its
+automated and rendered-UI gates. Phase 10 was completed in the same pass because
+its safe-error work was part of the remediation boundary.
 
 ## Phase 1: Project foundation
 
@@ -237,16 +236,21 @@ Acceptance:
 
 ## Phase 12: Release readiness
 
-- [ ] Run the full unit, integration, and UI suite.
-- [ ] Run a fresh-database end-to-end workflow with representative Tuya fixtures.
-- [ ] Test Romanian formatting for RON and EUR.
-- [ ] Inspect final rendered main, Settings, Calculate, History, and Error screens
+- [x] Run the full unit, integration, and UI suite.
+- [x] Run a fresh-database end-to-end workflow with representative Tuya fixtures.
+- [x] Test Romanian formatting for RON and EUR.
+- [x] Inspect final rendered main, Settings, Calculate, History, and Error screens
   under both light and dark system palettes.
-- [ ] Rehearse upgrade behavior from the preceding schema version.
-- [ ] Review README installation and troubleshooting instructions.
-- [ ] Confirm developer-facing documentation, metadata, CI, and scripts use English.
+- [x] Rehearse upgrade behavior from the preceding schema version.
+- [x] Review README installation and troubleshooting instructions.
+- [x] Confirm developer-facing documentation, metadata, CI, and scripts use English.
 - [ ] Install the draft DMG on a clean Apple Silicon Mac, complete a connection
   test, and only then promote the draft GitHub Release.
+
+The local release-readiness gates are complete. The remaining clean-Mac check
+requires the draft artifact, Apple Silicon hardware, and real Tuya access; it
+cannot be replaced by the Linux test environment. Follow the release rehearsal
+in `README.md` before declaring Phase 12 complete.
 
 Acceptance:
 

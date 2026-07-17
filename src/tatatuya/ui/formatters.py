@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+from tatatuya.domain.models import Currency
 from tatatuya.ui import text
 
 
@@ -31,6 +32,14 @@ def format_decimal(value: Decimal, *, places: int | None = None) -> str:
 
 def format_energy(value: Decimal) -> str:
     return f"{format_decimal(value)} kWh"
+
+
+def format_money(value: Decimal, currency: Currency) -> str:
+    return f"{format_decimal(value, places=2)} {currency.value}"
+
+
+def format_unit_price(value: Decimal, currency: Currency) -> str:
+    return f"{format_decimal(value)} {currency.value}/kWh"
 
 
 def format_local_datetime(value: datetime) -> str:

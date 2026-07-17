@@ -53,12 +53,31 @@ database initialization, opening the settings screen, and connection testing.
 Never place real credentials in source files, configuration files, or release
 artifacts.
 
+### Clean-Mac release rehearsal
+
+Before publishing the draft GitHub Release, use a clean Apple Silicon Mac with
+no TataTuya development checkout or existing TataTuya data:
+
+1. Download the DMG from the draft release, install the app, and launch it with
+   the documented Gatekeeper workaround.
+2. Confirm that the unconfigured app directs the user to Settings and creates
+   `~/Library/Application Support/TataTuya/tatatuya.sqlite3`.
+3. Enter real Tuya credentials in Settings, test the connection, save, and
+   confirm that the meter table refreshes without developer tools.
+4. Refresh a supported meter twice, calculate a cost between its two saved
+   readings, and confirm that the calculation appears in History after an app
+   restart.
+5. Inspect the local log and release artifact for credentials, then publish the
+   draft only if every preceding check passes.
+
 ## Troubleshooting
 
 - If macOS reports that the developer cannot be verified, use the
   Control-click → `Open` steps above; do not disable Gatekeeper globally.
 - If configuration is missing, open the application's settings screen. There
   is no first-run wizard.
+- If authentication succeeds but device listing fails, verify that the Tuya
+  cloud project grants access to the associated-device listing used by the app.
 - The local log is stored at
   `~/Library/Application Support/TataTuya/tatatuya.log` and does not include
   Tuya secrets.

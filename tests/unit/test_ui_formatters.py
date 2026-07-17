@@ -1,7 +1,14 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from tatatuya.ui.formatters import format_decimal, format_energy, format_local_datetime
+from tatatuya.domain.models import Currency
+from tatatuya.ui.formatters import (
+    format_decimal,
+    format_energy,
+    format_local_datetime,
+    format_money,
+    format_unit_price,
+)
 
 
 def test_romanian_decimal_and_energy_formatting() -> None:
@@ -16,3 +23,9 @@ def test_timestamp_format_contains_local_date_and_24_hour_time() -> None:
     assert ", " in rendered
     assert ":" in rendered
 
+
+def test_romanian_money_formatting_for_supported_currencies() -> None:
+    assert format_money(Decimal("1234.5"), Currency.RON) == "1.234,50 RON"
+    assert format_money(Decimal("1234.5"), Currency.EUR) == "1.234,50 EUR"
+    assert format_unit_price(Decimal("0.800"), Currency.RON) == "0,800 RON/kWh"
+    assert format_unit_price(Decimal("1.25"), Currency.EUR) == "1,25 EUR/kWh"

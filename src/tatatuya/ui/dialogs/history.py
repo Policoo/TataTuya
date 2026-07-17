@@ -23,9 +23,10 @@ from tatatuya.domain.models import Device, Reading
 from tatatuya.services.history_service import HistoryContext
 from tatatuya.ui import text
 from tatatuya.ui.formatters import (
-    format_decimal,
     format_energy,
     format_local_datetime,
+    format_money,
+    format_unit_price,
 )
 
 
@@ -175,8 +176,8 @@ class HistoryDialog(QDialog):
                     f"{format_local_datetime(item.end_reading.recorded_at_utc)}"
                 ),
                 format_energy(calculation.consumption_kwh),
-                f"{format_decimal(calculation.unit_price)} {calculation.currency.value}/kWh",
-                f"{format_decimal(calculation.total, places=2)} {calculation.currency.value}",
+                format_unit_price(calculation.unit_price, calculation.currency),
+                format_money(calculation.total, calculation.currency),
             )
             for column, value in enumerate(values):
                 self.calculations_table.setItem(row, column, QTableWidgetItem(value))
@@ -203,12 +204,12 @@ class HistoryDialog(QDialog):
             (text.CONSUMPTION, format_energy(calculation.consumption_kwh)),
             (
                 text.UNIT_PRICE,
-                f"{format_decimal(calculation.unit_price)} {calculation.currency.value}/kWh",
+                format_unit_price(calculation.unit_price, calculation.currency),
             ),
             (text.CURRENCY, calculation.currency.value),
             (
                 text.TOTAL,
-                f"{format_decimal(calculation.total, places=2)} {calculation.currency.value}",
+                format_money(calculation.total, calculation.currency),
             ),
         )
         for index, (label, value) in enumerate(rows):

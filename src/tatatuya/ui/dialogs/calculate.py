@@ -27,6 +27,7 @@ from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.formatters import (
     format_decimal,
     format_energy,
+    format_money,
     format_reading_option,
 )
 from tatatuya.ui.workers import WorkflowThread
@@ -201,9 +202,7 @@ class CalculationDialog(QDialog):
             else:
                 self.feedback.setText(text.CALCULATION_INVALID_PREVIEW)
             return
-        self.total_value.setText(
-            f"{format_decimal(preview.total, places=2)} {preview.currency.value}"
-        )
+        self.total_value.setText(format_money(preview.total, preview.currency))
 
     def save(self) -> None:
         if self.active_thread is not None:

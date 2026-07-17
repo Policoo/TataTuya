@@ -11,7 +11,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
@@ -157,6 +157,50 @@ def test_online_and_offline_states_use_semantic_colors(tmp_path) -> None:
     window.render(screenshot)
     assert screenshot.save(str(tmp_path / "main-window-status-colors.png"))
     window.close()
+
+
+def test_main_window_remains_readable_under_dark_system_palette(tmp_path) -> None:
+    qt_app = app()
+    original = qt_app.palette()
+    dark = QPalette(original)
+    dark.setColor(QPalette.ColorRole.Window, QColor("#202124"))
+    dark.setColor(QPalette.ColorRole.WindowText, QColor("#f8fafc"))
+    dark.setColor(QPalette.ColorRole.Base, QColor("#101114"))
+    dark.setColor(QPalette.ColorRole.Text, QColor("#f8fafc"))
+    qt_app.setPalette(dark)
+    qt_app.setStyleSheet(load_stylesheet())
+    window = None
+    try:
+        window = MainWindow(
+            cached_rows=[representative_row()], settings_configured=True
+        )
+        window.show()
+        qt_app.processEvents()
+
+        title = window.findChild(QLabel, "Title")
+        assert title is not None and title.isVisible()
+        assert title.palette().color(QPalette.ColorRole.WindowText) == QColor(
+            "#101828"
+        )
+        name_item = window.table.item(0, 0)
+        assert name_item is not None
+        assert not window.table.visualItemRect(name_item).isEmpty()
+        action_widget = window.table.cellWidget(0, 4)
+        assert action_widget is not None
+        assert all(
+            button.isVisible() and not button.geometry().isEmpty()
+            for button in action_widget.findChildren(QPushButton)
+        )
+
+        screenshot = QPixmap(window.size())
+        screenshot.fill(QColor("#f3f6fa"))
+        window.render(screenshot)
+        assert screenshot.save(str(tmp_path / "main-window-dark.png"))
+    finally:
+        if window is not None:
+            window.close()
+        qt_app.setPalette(original)
+        qt_app.setStyleSheet(load_stylesheet())
 
 
 def test_calculate_row_action_is_forwarded_with_its_device() -> None:
