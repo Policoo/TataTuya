@@ -95,6 +95,13 @@ Row actions:
 Buttons and rows must size from their styled text and layout. The UI must not
 depend on fixed control heights.
 
+Only devices with a supported cumulative-energy specification are presented as
+new meters. Other Tuya products are not shown in the billing table. A meter with
+saved readings remains visible if it later disappears from Tuya or becomes
+unsupported, so its immutable history and calculations remain accessible. Its
+state shows `Indisponibil în Tuya` when discovery confirms it is absent, and its
+remote `Status` action is disabled while absent.
+
 ## 5. Refresh and reading capture
 
 `Actualizează` performs this workflow:
@@ -107,6 +114,11 @@ depend on fixed control heights.
 6. Extract and normalize each usable cumulative forward-energy value.
 7. Store one new reading per successful device result.
 8. Update the device table.
+
+A successful discovery distinguishes supported meters, explicitly unsupported
+Tuya devices, and devices whose specification could not be classified safely.
+Unsupported devices without reading history are omitted from the meter table.
+An unsuccessful discovery does not mark cached meters as absent.
 
 When the application starts with complete saved settings, it performs this
 refresh once after showing cached local data. Saving settings immediately after
@@ -122,8 +134,11 @@ reading when the response contains a usable forward-energy value.
 
 ## 6. Energy extraction
 
-The preferred Tuya status code is `forward_energy_total`. The application must
-pair a status value with the matching entry from the device specification.
+The preferred Tuya status code is `forward_energy_total`. Tuya also defines
+`total_forward_energy` for compatible circuit-breaker products. The application
+accepts these two explicit cumulative-forward-energy aliases and must pair the
+status value with the exact code selected from that device's specification.
+Exactly one supported alias may be present; ambiguity is rejected.
 
 The normalized value is:
 
@@ -133,10 +148,12 @@ normalized value = raw value / 10^scale
 
 Rules:
 
-- Scaled kWh values become the canonical reading directly.
-- Scaled Wh values are converted to kWh.
-- Raw value, scale, source unit, normalized kWh, and diagnostic response are
-  retained.
+- Scaled kWh values become the canonical reading directly. Supported Tuya
+  spellings are `kWh` and `kW·h`.
+- Scaled Wh values are converted to kWh. Supported Tuya spellings are `Wh` and
+  `W·h`.
+- Raw value, scale, source unit, normalized kWh, redacted raw status, and the
+  redacted raw specification used for capture are retained.
 - Missing, ambiguous, non-numeric, or unsupported energy data raises a clear
   error rather than being guessed.
 - A changed or invalid specification must not reinterpret old readings; each

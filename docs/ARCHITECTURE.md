@@ -144,6 +144,8 @@ updated_at_utc TEXT NOT NULL
 
 Stores Tuya Client ID, Client Secret, region, and selected currency. Migration 2
 removes the obsolete `tuya.account_uid` setting from existing databases.
+Migration 3 adds device eligibility/presence/specification snapshots and the
+per-reading specification snapshot without rewriting existing readings.
 
 ### `devices`
 
@@ -158,12 +160,21 @@ energy_code TEXT
 energy_unit TEXT
 energy_scale INTEGER
 raw_device_json TEXT
+energy_eligibility TEXT NOT NULL
+present_in_tuya INTEGER
+raw_specification_json TEXT
 first_seen_at_utc TEXT NOT NULL
 last_seen_at_utc TEXT NOT NULL
 ```
 
 The row caches remote metadata. `name` is refreshed from Tuya and is not a local
 override.
+
+`energy_eligibility` is `supported`, `unsupported`, or `unknown`.
+`present_in_tuya` is nullable because upgraded databases cannot infer presence
+until the next successful complete discovery. Explicitly unsupported devices
+without history are omitted from the primary meter table; historical devices
+remain accessible regardless of later eligibility or presence.
 
 ### `device_preferences`
 
@@ -189,6 +200,7 @@ source_unit TEXT NOT NULL
 value_kwh TEXT NOT NULL
 source TEXT NOT NULL
 raw_status_json TEXT NOT NULL
+raw_specification_json TEXT NOT NULL
 ```
 
 Indexes:
@@ -236,15 +248,19 @@ does not depend on module-level credential constants. Settings remain in SQLite
 for this version.
 
 The explicit Settings connection test authenticates and verifies access to the
-read-only associated-device listing used by the normal refresh workflow. It does
-not require unrelated Tuya API products or permissions. Client ID, Client Secret,
-and region form the connection-settings identity; changing only the local billing
-currency does not invalidate a successful connection test.
+read-only associated-device listing used by the normal refresh workflow. Its
+success message reports the number of associated Tuya devices, before meter
+classification; it does not claim that every associated device is billable. It
+does not require unrelated Tuya API products or permissions. Client ID, Client
+Secret, and region form the connection-settings identity; changing only the
+local billing currency does not invalidate a successful connection test.
 
 ### Device discovery
 
 Discovery updates cached device metadata without mutating Tuya. A disappeared
-device is not allowed to orphan or delete historical data.
+device is not allowed to orphan or delete historical data. After a successful
+complete listing, returned devices are marked present and omitted cached devices
+are marked absent. A failed listing does not change presence state.
 
 The associated-user device endpoint is cursor-paginated. Follow `has_more` and
 `last_row_key` until all pages are loaded, and deduplicate devices by Tuya ID.
@@ -253,9 +269,18 @@ metadata is retained for diagnostics.
 
 ### Specifications
 
-For each applicable device, retrieve or load its specification and locate the
-status definition for `forward_energy_total`. Cache code, unit, and scale on the
-device, while retaining enough raw data for diagnostics.
+For each applicable device, retrieve or load its specification and locate
+exactly one of the explicit cumulative-forward-energy aliases:
+`forward_energy_total` or `total_forward_energy`. Cache the selected original
+code, unit, and scale on the device, while retaining the redacted raw
+specification for diagnostics.
+
+A specification is supported only when it contains exactly one supported alias,
+a non-negative integer scale, and a supported Wh or kWh spelling (`Wh`, `W·h`,
+`kWh`, or `kW·h`). A valid specification without either alias or with a
+conclusively unsupported unit classifies the device as unsupported. Missing,
+malformed, ambiguous, or invalid scale data remains an explicit recoverable
+error rather than an unsupported classification.
 
 Code, unit, and scale remain cached for local metadata and diagnostics, but the
 first release revalidates the specification once at the start of every batch or
@@ -272,7 +297,7 @@ result. One device failure must not discard valid readings from other devices.
 
 ### Normalization
 
-1. Find `forward_energy_total` in returned statuses.
+1. Find the exact selected cumulative-forward-energy code in returned statuses.
 2. Find its matching specification.
 3. Validate numeric raw value, scale, and unit.
 4. Apply the decimal scale.
@@ -299,6 +324,11 @@ load settings
 The UI starts this workflow once after configured application bootstrap and once
 after saving a connection that was successfully verified. Cached rows remain
 visible while it runs. There is no periodic timer.
+
+Refresh results also include cached historical meters confirmed absent from the
+latest discovery. They keep local calculation/history/info actions, while Status
+is disabled. Unsupported devices without readings are filtered from the primary
+table without turning the refresh into a false partial failure.
 
 ### Individual status workflow
 
@@ -357,6 +387,9 @@ are logged locally and wrapped in a generic Romanian message.
 - Formatting helpers own Romanian decimal, currency, date, and time display.
 - QSS defines appearance; Qt layouts and content size hints define geometry.
 - Long operations run through reusable Qt worker infrastructure.
+- Settings initialization, loading, connection testing, saving, and commit run
+  through worker-owned operations. A Settings dialog never owns a live SQLite
+  connection and receives its initial model after background loading.
 
 ## 11. Testing architecture
 

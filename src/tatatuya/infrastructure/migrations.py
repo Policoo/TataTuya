@@ -77,6 +77,19 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
         DELETE FROM settings WHERE key = 'tuya.account_uid';
         """,
     ),
+    (
+        3,
+        """
+        ALTER TABLE devices
+            ADD COLUMN energy_eligibility TEXT NOT NULL DEFAULT 'unknown';
+        ALTER TABLE devices
+            ADD COLUMN present_in_tuya INTEGER;
+        ALTER TABLE devices
+            ADD COLUMN raw_specification_json TEXT;
+        ALTER TABLE readings
+            ADD COLUMN raw_specification_json TEXT NOT NULL DEFAULT '{}';
+        """,
+    ),
 )
 
 

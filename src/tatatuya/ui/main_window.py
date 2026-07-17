@@ -24,7 +24,11 @@ from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Reading
 from tatatuya.services.reading_service import DeviceRefreshResult
 from tatatuya.ui import text
-from tatatuya.ui.components.device_table import DeviceTable, DeviceTableRow
+from tatatuya.ui.components.device_table import (
+    DeviceTable,
+    DeviceTableRow,
+    should_show_device,
+)
 from tatatuya.ui.workers import WorkflowThread
 
 
@@ -296,6 +300,7 @@ class MainWindow(QMainWindow):
             )
             for result in results
             if isinstance(result, DeviceRefreshResult)
+            and should_show_device(result.device, result.latest_reading)
         ]
         self.set_rows(rows)
         failures = sum(row.error_message is not None for row in rows)

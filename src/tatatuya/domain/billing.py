@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from tatatuya.domain.energy import canonical_energy_unit
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Calculation, Currency, Reading
 
@@ -37,6 +38,8 @@ def calculate_period(
     created_at_utc: datetime,
 ) -> Calculation:
     consumption = calculate_consumption(start, end)
+    if start.id is None or end.id is None:
+        raise ValueError("Billing requires persisted readings")
     if not unit_price.is_finite() or unit_price <= 0:
         raise _invalid_price()
 
@@ -71,7 +74,10 @@ def calculate_consumption(start: Reading, end: Reading) -> Decimal:
             "Perioadă invalidă",
             "Citirea finală trebuie să fie ulterioară citirii inițiale.",
         )
-    if start.source_unit.strip().lower() not in {"kwh", "wh"} or end.source_unit.strip().lower() not in {"kwh", "wh"}:
+    if (
+        canonical_energy_unit(start.source_unit) is None
+        or canonical_energy_unit(end.source_unit) is None
+    ):
         raise UserFacingError(
             "Unități incompatibile",
             "Una dintre citirile selectate folosește o unitate neacceptată.",

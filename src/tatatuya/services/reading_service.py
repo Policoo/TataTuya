@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Callable, Sequence
 
 from tatatuya.domain.energy import normalize_energy
-from tatatuya.domain.errors import UserFacingError
+from tatatuya.domain.errors import UnsupportedEnergyDeviceError, UserFacingError
 from tatatuya.domain.models import Device, DeviceStatus, EnergySpecification, Reading
 from tatatuya.services.device_service import DeviceService
 from tatatuya.services.ports import ReadingStore, TuyaGateway
@@ -53,6 +53,7 @@ class ReadingService:
         devices = self.device_service.discover()
         prepared: dict[str, tuple[Device, EnergySpecification]] = {}
         failures: dict[str, UserFacingError] = {}
+        unsupported: set[str] = set()
         for device in devices:
             try:
                 # A user-triggered refresh revalidates scale and unit before capture.
@@ -61,6 +62,8 @@ class ReadingService:
                         device, force_refresh=True
                     )
                 )
+            except UnsupportedEnergyDeviceError:
+                unsupported.add(device.device_id)
             except UserFacingError as exc:
                 failures[device.device_id] = exc
 
@@ -78,12 +81,18 @@ class ReadingService:
                     )
 
         results: list[DeviceRefreshResult] = []
+        remote_ids = {device.device_id for device in devices}
         for original_device in devices:
             device_id = original_device.device_id
-            current_device = prepared.get(device_id, (original_device, None))[0]
+            prepared_item = prepared.get(device_id)
+            current_device = (
+                prepared_item[0]
+                if prepared_item is not None
+                else self.device_service.devices.get(device_id) or original_device
+            )
             error = failures.get(device_id)
             reading: Reading | None = None
-            if error is None:
+            if device_id not in unsupported and error is None:
                 status = statuses.get(device_id)
                 if status is None:
                     error = UserFacingError(
@@ -93,7 +102,8 @@ class ReadingService:
                     )
                 else:
                     try:
-                        specification = prepared[device_id][1]
+                        assert prepared_item is not None
+                        specification = prepared_item[1]
                         reading = self._store_reading(
                             current_device, status, specification, source="batch"
                         )
@@ -105,6 +115,19 @@ class ReadingService:
                     reading,
                     reading or self.readings.latest_for_device(device_id),
                     error,
+                )
+            )
+        for cached_device in self.device_service.devices.list_all():
+            if (
+                cached_device.device_id in remote_ids
+                or cached_device.present_in_tuya is not False
+            ):
+                continue
+            results.append(
+                DeviceRefreshResult(
+                    cached_device,
+                    None,
+                    self.readings.latest_for_device(cached_device.device_id),
                 )
             )
         return results
@@ -132,6 +155,15 @@ class ReadingService:
             )
             reading = self._store_reading(device, status, specification, source="status")
             return StatusCaptureResult(status, reading)
+        except UnsupportedEnergyDeviceError:
+            return StatusCaptureResult(
+                status,
+                None,
+                UserFacingError(
+                    "Contor incompatibil",
+                    f"Contorul „{device.name}” nu oferă o specificație de energie acceptată.",
+                ),
+            )
         except UserFacingError as exc:
             # Raw status remains useful for diagnostics even when it has no billable energy.
             return StatusCaptureResult(status, None, exc)
@@ -165,6 +197,7 @@ class ReadingService:
                 value_kwh=value_kwh,
                 source=source,
                 raw_status_json=status.raw_json,
+                raw_specification_json=specification.raw_json,
             )
         )
 

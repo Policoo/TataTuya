@@ -1,10 +1,20 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
+import pytest
+
+from tatatuya.domain.errors import (
+    EnergySpecificationError,
+    UnsupportedEnergyDeviceError,
+    UserFacingError,
+)
 from tatatuya.domain.models import (
     Currency,
     Device,
     DeviceStatus,
+    EnergyEligibility,
     EnergySpecification,
     StatusValue,
     TuyaSettings,
@@ -13,18 +23,24 @@ from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.tuya.client import PreparedRequest, TuyaClient
+from tatatuya.infrastructure.tuya.parsers import (
+    parse_devices,
+    parse_energy_specification,
+)
 from tatatuya.services.device_service import DeviceService
 from tatatuya.services.ports import TuyaGateway
 from tatatuya.services.reading_service import ReadingService
 
 
 NOW = datetime(2026, 7, 16, 12, tzinfo=UTC)
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "tuya_responses"
 
 
 class FakeGateway:
     def __init__(self, devices: list[Device]) -> None:
         self.devices = devices
         self.specification = EnergySpecification("forward_energy_total", "kWh", 2)
+        self.status_code = "forward_energy_total"
         self.values: dict[str, int | Decimal | None] = {
             device.device_id: 12345 for device in devices
         }
@@ -32,12 +48,22 @@ class FakeGateway:
         self.failed_batches: set[int] = set()
         self.batch_calls: list[list[str]] = []
         self.specification_calls: list[str] = []
+        self.unsupported: set[str] = set()
+        self.invalid_specifications: set[str] = set()
 
     def list_devices(self, **params):
         return self.devices
 
     def get_device_specification(self, device_id: str):
         self.specification_calls.append(device_id)
+        if device_id in self.unsupported:
+            raise UnsupportedEnergyDeviceError(
+                "no cumulative energy", '{"status":[]}'
+            )
+        if device_id in self.invalid_specifications:
+            raise EnergySpecificationError(
+                "invalid specification", '{"status":"invalid"}'
+            )
         return self.specification
 
     def get_devices_status(self, device_ids: list[str]):
@@ -56,7 +82,7 @@ class FakeGateway:
 
     def _status(self, device_id: str):
         value = self.values[device_id]
-        statuses = () if value is None else (StatusValue("forward_energy_total", value),)
+        statuses = () if value is None else (StatusValue(self.status_code, value),)
         return DeviceStatus(
             device_id,
             statuses,
@@ -76,6 +102,36 @@ def services(tmp_path, gateway: TuyaGateway):
         gateway, device_service, readings, clock=lambda: NOW
     )
     return connection_context, devices, readings, reading_service
+
+
+@pytest.mark.parametrize("payload", [{}, {"devices": "not-a-list"}])
+def test_malformed_discovery_does_not_mark_cached_meter_absent(
+    tmp_path, payload
+) -> None:
+    class MalformedDiscoveryGateway(FakeGateway):
+        def list_devices(self, **params):
+            return parse_devices(payload)
+
+    gateway = MalformedDiscoveryGateway([])
+    context, devices, _, service = services(tmp_path, gateway)
+    try:
+        devices.upsert(
+            Device(
+                "meter-1",
+                "Casa",
+                energy_eligibility=EnergyEligibility.SUPPORTED,
+                present_in_tuya=True,
+            ),
+            NOW,
+        )
+
+        with pytest.raises(UserFacingError, match="Lista dispozitivelor"):
+            service.refresh()
+
+        cached = devices.get("meter-1")
+        assert cached is not None and cached.present_in_tuya is True
+    finally:
+        context.__exit__(None, None, None)
 
 
 def test_refresh_chunks_21_devices_and_preserves_successful_batch(tmp_path) -> None:
@@ -210,6 +266,134 @@ def test_precision_sensitive_decimal_is_persisted_exactly(tmp_path) -> None:
         assert stored.raw_value == "0.12345678901234567890123456789"
         assert stored.value_kwh == Decimal("0.12345678901234567890123456789")
         assert "0.12345678901234567890123456789" in stored.raw_status_json
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_circuit_breaker_alias_is_classified_captured_and_persisted(tmp_path) -> None:
+    payload = json.loads(
+        (FIXTURES / "specification_total_forward.json").read_text(encoding="utf-8")
+    )
+    gateway = FakeGateway([Device("meter-1", "Casa", category="dlq")])
+    gateway.specification = parse_energy_specification(payload["result"])
+    gateway.status_code = gateway.specification.code
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        result = service.refresh()[0]
+        stored_device = devices.get("meter-1")
+
+        assert result.error is None
+        assert result.reading is not None
+        assert result.reading.value_kwh == Decimal("123.45")
+        assert result.reading.source_unit == "kW·h"
+        assert result.reading.raw_specification_json == gateway.specification.raw_json
+        assert stored_device is not None
+        assert stored_device.energy_eligibility is EnergyEligibility.SUPPORTED
+        assert stored_device.energy_code == "total_forward_energy"
+        assert readings.latest_for_device("meter-1") == result.reading
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_mixed_account_classifies_and_omits_non_meter_from_capture(tmp_path) -> None:
+    gateway = FakeGateway(
+        [Device("meter-1", "Casa"), Device("lamp-1", "Lampă")]
+    )
+    gateway.unsupported.add("lamp-1")
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        results = {item.device.device_id: item for item in service.refresh()}
+
+        assert results["meter-1"].reading is not None
+        assert results["lamp-1"].reading is None
+        assert results["lamp-1"].error is None
+        lamp = devices.get("lamp-1")
+        assert lamp is not None
+        assert lamp.energy_eligibility is EnergyEligibility.UNSUPPORTED
+        assert readings.list_for_device("lamp-1") == []
+        assert gateway.batch_calls == [["meter-1"]]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_invalid_specification_remains_unknown_instead_of_unsupported(tmp_path) -> None:
+    gateway = FakeGateway([Device("meter-1", "Casa")])
+    gateway.invalid_specifications.add("meter-1")
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        result = service.refresh()[0]
+        stored = devices.get("meter-1")
+        assert result.error is not None
+        assert result.reading is None
+        assert stored is not None
+        assert stored.energy_eligibility is EnergyEligibility.UNKNOWN
+        assert stored.raw_specification_json == '{"status":"invalid"}'
+        assert readings.list_for_device("meter-1") == []
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_disappeared_meter_remains_in_refresh_results_with_history(tmp_path) -> None:
+    meter = Device("meter-1", "Casa")
+    garage = Device("meter-2", "Garaj")
+    gateway = FakeGateway([meter, garage])
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        service.refresh()
+        garage_latest = readings.latest_for_device("meter-2")
+        gateway.devices = [meter]
+
+        results = {item.device.device_id: item for item in service.refresh()}
+
+        assert set(results) == {"meter-1", "meter-2"}
+        assert results["meter-2"].device.present_in_tuya is False
+        assert results["meter-2"].latest_reading == garage_latest
+        assert results["meter-2"].reading is None
+        assert len(readings.list_for_device("meter-2")) == 1
+        stored_garage = devices.get("meter-2")
+        assert stored_garage is not None and stored_garage.present_in_tuya is False
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_historical_meter_becoming_unsupported_is_not_a_refresh_failure(
+    tmp_path,
+) -> None:
+    gateway = FakeGateway([Device("meter-1", "Casa")])
+    context, _, readings, service = services(tmp_path, gateway)
+    try:
+        first = service.refresh()[0]
+        gateway.unsupported.add("meter-1")
+
+        second = service.refresh()[0]
+
+        assert first.reading is not None
+        assert second.error is None
+        assert second.reading is None
+        assert second.latest_reading == first.reading
+        assert readings.list_for_device("meter-1") == [first.reading]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_reading_retains_exact_redacted_specification_snapshot(tmp_path) -> None:
+    gateway = FakeGateway([Device("meter-1", "Casa")])
+    raw_specification = (
+        '{"status":[{"code":"forward_energy_total",'
+        '"values":{"scale":2,"unit":"kWh"}}]}'
+    )
+    gateway.specification = EnergySpecification(
+        "forward_energy_total", "kWh", 2, raw_specification
+    )
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        result = service.refresh()[0]
+        assert result.reading is not None
+        assert result.reading.raw_specification_json == raw_specification
+        assert readings.list_for_device("meter-1")[0].raw_specification_json == raw_specification
+        stored_device = devices.get("meter-1")
+        assert stored_device is not None
+        assert stored_device.raw_specification_json == raw_specification
     finally:
         context.__exit__(None, None, None)
 

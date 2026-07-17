@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Calculation, Reading
-from tatatuya.services.ports import CalculationStore, ReadingStore
+
+
+class HistoryReadingStore(Protocol):
+    def list_for_device(self, device_id: str) -> list[Reading]: ...
+
+
+class HistoryCalculationStore(Protocol):
+    def list_for_device(self, device_id: str) -> list[Calculation]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +34,8 @@ class HistoryContext:
 class HistoryService:
     def __init__(
         self,
-        readings: ReadingStore,
-        calculations: CalculationStore,
+        readings: HistoryReadingStore,
+        calculations: HistoryCalculationStore,
     ) -> None:
         self.readings = readings
         self.calculations = calculations
@@ -66,4 +74,3 @@ class HistoryService:
                 )
             items.append(CalculationHistoryItem(calculation, start, end))
         return HistoryContext(device_id, readings, tuple(items))
-

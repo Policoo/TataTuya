@@ -19,8 +19,8 @@ class ReadingRepository:
             """
             INSERT INTO readings(
                 device_id, recorded_at_utc, raw_value, scale, source_unit,
-                value_kwh, source, raw_status_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                value_kwh, source, raw_status_json, raw_specification_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reading.device_id,
@@ -31,6 +31,7 @@ class ReadingRepository:
                 canonical_decimal(reading.value_kwh),
                 reading.source,
                 reading.raw_status_json,
+                reading.raw_specification_json,
             ),
         )
         reading_id = cursor.lastrowid
@@ -46,6 +47,7 @@ class ReadingRepository:
             source=reading.source,
             raw_status_json=reading.raw_status_json,
             id=int(reading_id),
+            raw_specification_json=reading.raw_specification_json,
         )
 
     def get(self, reading_id: int) -> Reading | None:
@@ -106,4 +108,5 @@ def _map_reading(row: sqlite3.Row) -> Reading:
         value_kwh=Decimal(row["value_kwh"]),
         source=row["source"],
         raw_status_json=row["raw_status_json"],
+        raw_specification_json=row["raw_specification_json"],
     )

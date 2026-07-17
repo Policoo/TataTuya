@@ -15,6 +15,10 @@ def run() -> None:
             raise RuntimeError("The packaged stylesheet is empty")
         return
 
+    from tatatuya.infrastructure.logging_setup import configure_logging
+
+    configure_logging()
+
     # Keeping this import lazy lets domain and persistence tools run without Qt.
     from tatatuya.ui.app import run as run_legacy_ui
 

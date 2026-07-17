@@ -20,7 +20,8 @@ NOW = datetime(2026, 12, 3, 18, 42, tzinfo=UTC)
 
 
 def app() -> QApplication:
-    instance = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
 
@@ -74,10 +75,13 @@ def test_history_dialog_renders_read_only_tabs_and_full_calculation_details(
     assert dialog.tabs.tabText(0) == text.READINGS
     assert dialog.tabs.tabText(1) == text.CALCULATIONS
     assert dialog.readings_table.rowCount() == 2
-    assert dialog.readings_table.item(0, 1).text() == "1.247,06 kWh"
-    assert dialog.readings_table.item(0, 4).text() == text.SOURCE_INDIVIDUAL
+    reading_value = dialog.readings_table.item(0, 1)
+    reading_source = dialog.readings_table.item(0, 4)
+    assert reading_value is not None and reading_value.text() == "1.247,06 kWh"
+    assert reading_source is not None and reading_source.text() == text.SOURCE_INDIVIDUAL
     assert dialog.calculations_table.rowCount() == 1
-    assert dialog.calculations_table.item(0, 4).text() == "10,00 RON"
+    calculation_total = dialog.calculations_table.item(0, 4)
+    assert calculation_total is not None and calculation_total.text() == "10,00 RON"
 
     detail_text = " ".join(
         label.text() for label in dialog.calculation_detail.findChildren(QLabel)

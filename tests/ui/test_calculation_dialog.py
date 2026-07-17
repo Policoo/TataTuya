@@ -20,7 +20,8 @@ NOW = datetime(2026, 12, 3, 18, 42, tzinfo=UTC)
 
 
 def app() -> QApplication:
-    instance = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
 
@@ -40,7 +41,11 @@ def reading(reading_id: int, value: str, minute: int) -> Reading:
 
 
 class Service:
-    def __init__(self, readings=None, remembered=Decimal("0.80")) -> None:
+    def __init__(
+        self,
+        readings=None,
+        remembered: Decimal | None = Decimal("0.80"),
+    ) -> None:
         self.saved = []
         self.save_thread_ids = []
         self.readings = readings or READINGS
@@ -79,7 +84,7 @@ READINGS = {
 }
 
 
-def context(remembered=Decimal("0.80")) -> CalculationContext:
+def context(remembered: Decimal | None = Decimal("0.80")) -> CalculationContext:
     return CalculationContext(
         "meter-1",
         tuple(READINGS.values()),

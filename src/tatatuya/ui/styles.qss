@@ -78,6 +78,13 @@ QPushButton#RowActionButton:hover {
     border-color: #8fb5f5;
 }
 
+QPushButton#SecondaryButton:disabled,
+QPushButton#RowActionButton:disabled {
+    background: #f2f4f7;
+    color: #98a2b3;
+    border-color: #d0d5dd;
+}
+
 QPushButton#GhostButton:hover {
     background: #eef5ff;
     border-color: #8fb5f5;

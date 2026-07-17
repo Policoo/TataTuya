@@ -17,3 +17,14 @@ class UserFacingError(Exception):
         self.message = message
         self.technical_details = technical_details
 
+
+class EnergySpecificationError(Exception):
+    """A specification that cannot safely drive reading normalization."""
+
+    def __init__(self, message: str, raw_json: str = "{}") -> None:
+        super().__init__(message)
+        self.raw_json = raw_json
+
+
+class UnsupportedEnergyDeviceError(EnergySpecificationError):
+    """A valid specification conclusively identifies a non-billable device."""

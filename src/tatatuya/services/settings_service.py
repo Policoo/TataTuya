@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Any, Protocol
 
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import TuyaSettings
@@ -13,7 +13,7 @@ from tatatuya.services.ports import SettingsStore
 
 class SettingsGateway(Protocol):
     def authenticate(self) -> str: ...
-    def list_devices(self, **params: object) -> list[object]: ...
+    def list_devices(self, **params: Any) -> Sequence[object]: ...
 
 
 @dataclass(frozen=True, slots=True)

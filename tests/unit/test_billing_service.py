@@ -31,34 +31,34 @@ def reading(reading_id: int, value: str, day: int) -> Reading:
 
 
 class ReadingStore:
-    def __init__(self, values):
+    def __init__(self, values: list[Reading]) -> None:
         self.values = list(values)
 
-    def list_for_device(self, device_id):
+    def list_for_device(self, device_id: str) -> list[Reading]:
         return [value for value in self.values if value.device_id == device_id]
 
-    def get(self, reading_id):
+    def get(self, reading_id: int) -> Reading | None:
         return next((value for value in self.values if value.id == reading_id), None)
 
 
 class CalculationStore:
-    def __init__(self, latest=None):
+    def __init__(self, latest: Calculation | None = None) -> None:
         self.latest = latest
-        self.saved = []
+        self.saved: list[Calculation] = []
 
-    def latest_for_device(self, device_id):
+    def latest_for_device(self, device_id: str) -> Calculation | None:
         return self.latest
 
-    def add(self, value):
+    def add(self, calculation: Calculation) -> Calculation:
         saved = Calculation(
-            value.device_id,
-            value.start_reading_id,
-            value.end_reading_id,
-            value.consumption_kwh,
-            value.unit_price,
-            value.currency,
-            value.total,
-            value.created_at_utc,
+            calculation.device_id,
+            calculation.start_reading_id,
+            calculation.end_reading_id,
+            calculation.consumption_kwh,
+            calculation.unit_price,
+            calculation.currency,
+            calculation.total,
+            calculation.created_at_utc,
             99,
         )
         self.saved.append(saved)
@@ -66,18 +66,31 @@ class CalculationStore:
 
 
 class PreferenceStore:
-    def __init__(self, value=None):
+    def __init__(self, value: DevicePricePreference | None = None) -> None:
         self.value = value
-        self.saved = []
+        self.saved: list[tuple[str, Decimal, Currency, datetime]] = []
 
-    def get(self, device_id):
+    def get(self, device_id: str) -> DevicePricePreference | None:
         return self.value
 
-    def save_price(self, device_id, unit_price, currency, updated_at_utc):
+    def save_price(
+        self,
+        device_id: str,
+        unit_price: Decimal,
+        currency: Currency,
+        updated_at_utc: datetime,
+    ) -> DevicePricePreference:
         self.saved.append((device_id, unit_price, currency, updated_at_utc))
+        saved = DevicePricePreference(device_id, unit_price, currency, updated_at_utc)
+        self.value = saved
+        return saved
 
 
-def service(readings, calculation=None, preference=None):
+def service(
+    readings: list[Reading],
+    calculation: Calculation | None = None,
+    preference: DevicePricePreference | None = None,
+) -> tuple[BillingService, CalculationStore, PreferenceStore]:
     calculation_store = CalculationStore(calculation)
     preference_store = PreferenceStore(preference)
     return (

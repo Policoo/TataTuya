@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Protocol
 
 from tatatuya.domain.billing import (
     calculate_consumption,
@@ -13,12 +14,33 @@ from tatatuya.domain.billing import (
     resolve_unit_price,
 )
 from tatatuya.domain.errors import UserFacingError
-from tatatuya.domain.models import Calculation, Currency, Reading
-from tatatuya.services.ports import (
-    CalculationStore,
-    DevicePreferenceStore,
-    ReadingStore,
+from tatatuya.domain.models import (
+    Calculation,
+    Currency,
+    DevicePricePreference,
+    Reading,
 )
+
+
+class BillingReadingStore(Protocol):
+    def get(self, reading_id: int) -> Reading | None: ...
+    def list_for_device(self, device_id: str) -> list[Reading]: ...
+
+
+class BillingCalculationStore(Protocol):
+    def add(self, calculation: Calculation) -> Calculation: ...
+    def latest_for_device(self, device_id: str) -> Calculation | None: ...
+
+
+class BillingPreferenceStore(Protocol):
+    def get(self, device_id: str) -> DevicePricePreference | None: ...
+    def save_price(
+        self,
+        device_id: str,
+        unit_price: Decimal,
+        currency: Currency,
+        updated_at_utc: datetime,
+    ) -> DevicePricePreference: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,9 +56,9 @@ class CalculationContext:
 class BillingService:
     def __init__(
         self,
-        readings: ReadingStore,
-        calculations: CalculationStore,
-        preferences: DevicePreferenceStore,
+        readings: BillingReadingStore,
+        calculations: BillingCalculationStore,
+        preferences: BillingPreferenceStore,
         now: Callable[[], datetime] | None = None,
     ) -> None:
         self.readings = readings
@@ -70,7 +92,8 @@ class BillingService:
             and latest_calculation.end_reading_id in available_ids
             else earliest.id
         )
-        if any(reading.id is None for reading in readings) or previous_end_id is None:
+        newest_id = newest.id
+        if any(reading.id is None for reading in readings) or previous_end_id is None or newest_id is None:
             raise UserFacingError(
                 "Citiri indisponibile",
                 "Citirile salvate nu au putut fi pregătite pentru calcul.",
@@ -86,7 +109,7 @@ class BillingService:
             device_id=device_id,
             readings=readings,
             default_start_reading_id=previous_end_id,
-            default_end_reading_id=newest.id,
+            default_end_reading_id=newest_id,
             remembered_unit_price=remembered,
             currency=currency,
         )

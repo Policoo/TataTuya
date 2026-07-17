@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 

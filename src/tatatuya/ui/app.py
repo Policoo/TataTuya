@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from tatatuya.domain.errors import UserFacingError
-from tatatuya.domain.models import Calculation, Currency
+from tatatuya.domain.models import Calculation, Currency, TuyaSettings
 from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure.repositories.calculations import (
     CalculationRepository,
@@ -17,7 +18,10 @@ from tatatuya.infrastructure.repositories.calculations import (
 )
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
-from tatatuya.infrastructure.repositories.settings import SettingsRepository
+from tatatuya.infrastructure.repositories.settings import (
+    DatabaseSettingsStore,
+    SettingsRepository,
+)
 from tatatuya.infrastructure.tuya.client import TuyaClient
 from tatatuya.services.billing_service import BillingService, CalculationContext
 from tatatuya.services.device_service import DeviceService
@@ -25,14 +29,21 @@ from tatatuya.services.history_service import HistoryContext, HistoryService
 from tatatuya.services.reading_service import ReadingService, StatusCaptureResult
 from tatatuya.services.settings_service import SettingsService
 from tatatuya.ui import text
-from tatatuya.ui.components.device_table import DeviceTableRow
-from tatatuya.ui.components.modal import AppModal
+from tatatuya.ui.components.device_table import DeviceTableRow, should_show_device
 from tatatuya.ui.dialogs.calculate import CalculationDialog
 from tatatuya.ui.dialogs.device_info import DeviceInfoDialog
 from tatatuya.ui.dialogs.device_status import DeviceStatusDialog
+from tatatuya.ui.dialogs.error import ErrorDialog
 from tatatuya.ui.dialogs.history import HistoryDialog
 from tatatuya.ui.dialogs.settings import REGION_LABELS, SavedSettings, SettingsDialog
 from tatatuya.ui.main_window import InitialState, MainWindow
+from tatatuya.ui.workers import log_unexpected_exception
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsDialogContext:
+    service: SettingsService
+    settings: TuyaSettings | None
 
 
 def load_stylesheet() -> str:
@@ -49,7 +60,11 @@ def _load_initial_state(database: Database) -> InitialState:
         devices = DeviceRepository(connection).list_all()
         latest = ReadingRepository(connection).latest_by_device()
     configured = settings is not None and settings.is_complete
-    rows = [DeviceTableRow(device, latest.get(device.device_id)) for device in devices]
+    rows = [
+        DeviceTableRow(device, latest.get(device.device_id))
+        for device in devices
+        if should_show_device(device, latest.get(device.device_id))
+    ]
     refresh = (
         (lambda: _refresh_workflow(database, settings)) if configured else None
     )
@@ -130,26 +145,34 @@ def _capture_status(database: Database, device_id: str) -> StatusCaptureResult:
         ).capture_individual_status(device_id)
 
 
+def _prepare_settings(database: Database) -> SettingsDialogContext:
+    database.initialize()
+    service = SettingsService(
+        DatabaseSettingsStore(database),
+        TuyaClient,
+        REGION_LABELS,
+    )
+    return SettingsDialogContext(service, service.load())
+
+
 def create_main_window(database: Database | None = None) -> MainWindow:
     database = database or Database()
     window = MainWindow(bootstrap_workflow=lambda: _load_initial_state(database))
 
     def show_error(error, parent=None) -> None:
-        modal = AppModal(error.title, error.message, parent or window)
-        if error.technical_details:
-            modal.add_field_grid([("Detalii tehnice", error.technical_details)])
-        modal.exec()
+        ErrorDialog(error, parent or window).exec()
 
     def show_settings() -> None:
-        database.initialize()
-        saved_result: SavedSettings | None = None
-        with database.connect() as connection:
-            service = SettingsService(
-                SettingsRepository(connection),
-                TuyaClient,
+        def open_dialog(payload: object) -> None:
+            if not isinstance(payload, SettingsDialogContext):
+                return
+            saved_result: SavedSettings | None = None
+            dialog = SettingsDialog(
+                payload.service,
                 REGION_LABELS,
+                window,
+                initial_settings=payload.settings,
             )
-            dialog = SettingsDialog(service, REGION_LABELS, window)
             dialog.error_raised.connect(
                 lambda error: show_error(error, dialog)
             )
@@ -162,12 +185,19 @@ def create_main_window(database: Database | None = None) -> MainWindow:
 
             dialog.settings_saved.connect(remember_saved_settings)
             dialog.exec()
-        if saved_result is not None:
-            window.apply_settings(
-                lambda: _refresh_workflow(database, saved_result.settings),
-                connection_verified=saved_result.connection_verified,
-                refresh_when_verified=True,
-            )
+            saved = saved_result
+            if saved is not None:
+                window.apply_settings(
+                    lambda: _refresh_workflow(database, saved.settings),
+                    connection_verified=saved.connection_verified,
+                    refresh_when_verified=True,
+                )
+
+        window.run_background_operation(
+            lambda: _prepare_settings(database),
+            open_dialog,
+            text.LOADING_SETTINGS,
+        )
 
     def show_calculation(device) -> None:
         def open_dialog(payload: object) -> None:
@@ -234,10 +264,30 @@ def create_main_window(database: Database | None = None) -> MainWindow:
     return window
 
 
+def install_exception_hook(window: MainWindow) -> None:
+    """Convert uncaught Qt callback failures into the shared safe dialog."""
+
+    def handle_exception(exception_type, error, traceback) -> None:
+        if isinstance(error, UserFacingError):
+            displayed = error
+        else:
+            error.__traceback__ = traceback
+            log_unexpected_exception(error)
+            displayed = UserFacingError(
+                "Eroare neașteptată",
+                "Operațiunea nu a putut fi finalizată. Încercați din nou.",
+            )
+        QTimer.singleShot(0, lambda: ErrorDialog(displayed, window).exec())
+
+    sys.excepthook = handle_exception
+
+
 def run() -> None:
-    app = QApplication.instance() or QApplication(sys.argv)
+    existing = QApplication.instance()
+    app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
     app.setApplicationName("TataTuya")
     app.setStyleSheet(load_stylesheet())
     window = create_main_window()
+    install_exception_hook(window)
     window.show()
     sys.exit(app.exec())

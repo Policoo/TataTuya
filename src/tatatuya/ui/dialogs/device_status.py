@@ -35,7 +35,7 @@ class DeviceStatusDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.device = device
-        self.result = result
+        self.capture_result = result
         self.setWindowTitle(text.DEVICE_STATUS_TITLE)
         self.setModal(True)
         self.resize(860, 650)
@@ -107,7 +107,7 @@ class DeviceStatusDialog(QDialog):
         self._show_capture_result()
 
     def _populate_status(self) -> None:
-        statuses = self.result.status.statuses
+        statuses = self.capture_result.status.statuses
         self.status_table.setRowCount(len(statuses))
         for row, status in enumerate(statuses):
             self.status_table.setItem(row, 0, QTableWidgetItem(status.code))
@@ -119,19 +119,19 @@ class DeviceStatusDialog(QDialog):
         )
 
     def _show_capture_result(self) -> None:
-        if self.result.reading is not None:
+        if self.capture_result.reading is not None:
             self.capture_feedback.setProperty("state", "success")
             self.capture_feedback.setText(
                 text.STATUS_READING_SAVED.format(
-                    reading=format_energy(self.result.reading.value_kwh)
+                    reading=format_energy(self.capture_result.reading.value_kwh)
                 )
             )
             return
-        if self.result.capture_error is not None:
+        if self.capture_result.capture_error is not None:
             self.capture_feedback.setProperty("state", "warning")
             self.capture_feedback.setText(
                 text.STATUS_READING_NOT_SAVED.format(
-                    message=self.result.capture_error.message
+                    message=self.capture_result.capture_error.message
                 )
             )
             return
@@ -159,4 +159,3 @@ def pretty_json(raw_json: str) -> str:
     except (json.JSONDecodeError, TypeError):
         return raw_json
     return json.dumps(parsed, indent=2, ensure_ascii=False, sort_keys=True)
-

@@ -12,7 +12,8 @@ from tatatuya.ui.dialogs.device_info import DeviceInfoDialog
 
 
 def app() -> QApplication:
-    instance = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
 
@@ -66,4 +67,3 @@ def test_info_translates_metadata_and_has_no_mutation_controls(tmp_path) -> None
     assert screenshot_path.stat().st_size > 8_000
     assert dialog.minimumSizeHint().height() <= dialog.height()
     dialog.close()
-

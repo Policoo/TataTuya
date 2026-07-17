@@ -18,7 +18,8 @@ NOW = datetime(2026, 7, 17, 12, tzinfo=UTC)
 
 
 def app() -> QApplication:
-    instance = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
 
@@ -56,9 +57,12 @@ def test_status_preserves_raw_codes_and_reports_captured_reading(tmp_path) -> No
     qt_app.processEvents()
 
     assert dialog.status_table.rowCount() == 2
-    assert dialog.status_table.item(0, 0).text() == "forward_energy_total"
-    assert dialog.status_table.item(1, 0).text() == "switch_1"
-    assert dialog.status_table.item(1, 1).text() == "false"
+    energy_code = dialog.status_table.item(0, 0)
+    switch_code = dialog.status_table.item(1, 0)
+    switch_value = dialog.status_table.item(1, 1)
+    assert energy_code is not None and energy_code.text() == "forward_energy_total"
+    assert switch_code is not None and switch_code.text() == "switch_1"
+    assert switch_value is not None and switch_value.text() == "false"
     assert not dialog.status_table.editTriggers()
     assert dialog.capture_feedback.text() == text.STATUS_READING_SAVED.format(
         reading="1.234,56 kWh"
@@ -95,7 +99,8 @@ def test_status_keeps_diagnostics_visible_when_energy_cannot_be_saved() -> None:
     qt_app.processEvents()
 
     assert dialog.status_table.rowCount() == 1
-    assert dialog.status_table.item(0, 0).text() == "switch_1"
+    switch_code = dialog.status_table.item(0, 0)
+    assert switch_code is not None and switch_code.text() == "switch_1"
     assert "Citirea nu a fost salvată" in dialog.capture_feedback.text()
     assert capture_error.message in dialog.capture_feedback.text()
     assert dialog.raw_response.isVisible()
@@ -115,4 +120,3 @@ def test_status_has_a_clear_empty_diagnostic_state() -> None:
     assert dialog.status_empty.isVisible()
     assert dialog.capture_feedback.text() == text.STATUS_WITHOUT_READING
     dialog.close()
-

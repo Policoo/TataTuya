@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 import os
@@ -13,19 +14,33 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
-from tatatuya.domain.models import Currency, Device, Reading, TuyaSettings
+from tatatuya.domain.models import (
+    Currency,
+    Device,
+    EnergyEligibility,
+    Reading,
+    TuyaSettings,
+)
 from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.repositories.devices import DeviceRepository
+from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import SettingsRepository
 from tatatuya.services.reading_service import DeviceRefreshResult
 from tatatuya.ui import text
-from tatatuya.ui.app import create_main_window, load_stylesheet
+from tatatuya.ui.app import (
+    _load_initial_state,
+    _prepare_settings,
+    create_main_window,
+    load_stylesheet,
+)
 from tatatuya.ui.components.device_table import DeviceTableRow
 from tatatuya.ui.dialogs.settings import SavedSettings
 from tatatuya.ui.main_window import InitialState, MainWindow
 
 
 def app() -> QApplication:
-    instance = QApplication.instance() or QApplication([])
+    existing = QApplication.instance()
+    instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
 
@@ -93,6 +108,7 @@ def test_action_text_is_visible_and_rows_fit_styled_buttons(tmp_path) -> None:
     assert all(button.height() >= button.sizeHint().height() for button in buttons)
     assert window.table.rowHeight(0) >= action_widget.sizeHint().height()
     name_item = window.table.item(0, 0)
+    assert name_item is not None
     name_rect = window.table.visualItemRect(name_item)
     text_width = window.table.fontMetrics().horizontalAdvance(name_item.text())
     assert name_rect.width() - 24 >= text_width
@@ -195,7 +211,78 @@ def test_individual_status_reading_updates_the_cached_main_table_row() -> None:
     qt_app.processEvents()
 
     assert window.table.rows[0].latest_reading is updated
-    assert window.table.item(0, 2).text() == "1.247,06 kWh"
+    current_reading = window.table.item(0, 2)
+    assert current_reading is not None and current_reading.text() == "1.247,06 kWh"
+    window.close()
+
+
+def test_bootstrap_hides_new_unsupported_devices_but_keeps_historical_rows(
+    tmp_path,
+) -> None:
+    qt_app = app()
+    database = Database(tmp_path / "lifecycle.sqlite3")
+    database.initialize()
+    with database.connect() as connection:
+        devices = DeviceRepository(connection)
+        devices.upsert(
+            Device(
+                "lamp-1",
+                "Lampă",
+                energy_eligibility=EnergyEligibility.UNSUPPORTED,
+                present_in_tuya=True,
+            ),
+            datetime(2026, 7, 17, tzinfo=UTC),
+        )
+        devices.upsert(
+            Device(
+                "unknown-missing",
+                "Dispozitiv neclasificat",
+                energy_eligibility=EnergyEligibility.UNKNOWN,
+                present_in_tuya=False,
+            ),
+            datetime(2026, 7, 17, tzinfo=UTC),
+        )
+        devices.upsert(
+            Device(
+                "meter-old",
+                "Contor vechi",
+                energy_eligibility=EnergyEligibility.UNSUPPORTED,
+                present_in_tuya=False,
+            ),
+            datetime(2026, 7, 17, tzinfo=UTC),
+        )
+        ReadingRepository(connection).add(
+            Reading(
+                "meter-old",
+                datetime(2026, 7, 16, tzinfo=UTC),
+                "10000",
+                2,
+                "kWh",
+                Decimal("100"),
+                "batch",
+                "{}",
+            )
+        )
+
+    state = _load_initial_state(database)
+    assert [row.device.device_id for row in state.rows] == ["meter-old"]
+
+    window = MainWindow(cached_rows=state.rows, settings_configured=True)
+    window.show()
+    qt_app.processEvents()
+    state_item = window.table.item(0, 1)
+    assert state_item is not None and state_item.text() == text.NOT_IN_TUYA
+    action_widget = window.table.cellWidget(0, 4)
+    assert action_widget is not None
+    buttons = {
+        button.text(): button
+        for button in action_widget.findChildren(QPushButton)
+    }
+    assert buttons[text.CALCULATE].isEnabled()
+    assert buttons[text.HISTORY].isEnabled()
+    assert buttons[text.INFO].isEnabled()
+    assert not buttons[text.STATUS].isEnabled()
+    assert window.grab().save(str(tmp_path / "missing-historical-meter.png"))
     window.close()
 
 
@@ -261,6 +348,39 @@ def test_refresh_runs_async_preserves_rows_and_restores_button() -> None:
     assert not window.active_threads
     assert window.refresh_button.isEnabled()
     assert window.status_label.text() == text.REFRESH_COMPLETE
+    window.close()
+
+
+def test_historical_unsupported_classification_reports_complete_refresh() -> None:
+    qt_app = app()
+    row = representative_row()
+    unsupported = replace(
+        row.device,
+        energy_eligibility=EnergyEligibility.UNSUPPORTED,
+        present_in_tuya=True,
+    )
+
+    window = MainWindow(
+        lambda: [
+            DeviceRefreshResult(
+                unsupported,
+                None,
+                row.latest_reading,
+            )
+        ],
+        cached_rows=[row],
+        settings_configured=True,
+    )
+    window.show()
+    window.refresh_devices()
+    deadline = time.monotonic() + 2
+    while window.active_threads and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    assert window.status_label.text() == text.REFRESH_COMPLETE
+    assert window.table.rowCount() == 1
     window.close()
 
 
@@ -335,6 +455,7 @@ def test_close_during_refresh_waits_for_worker_without_destroying_thread() -> No
 
 def test_database_bootstrap_starts_after_window_creation_and_off_gui_thread(
     monkeypatch,
+    tmp_path,
 ) -> None:
     qt_app = app()
     calls = []
@@ -345,7 +466,7 @@ def test_database_bootstrap_starts_after_window_creation_and_off_gui_thread(
         return InitialState([], False, None)
 
     monkeypatch.setattr("tatatuya.ui.app._load_initial_state", load_state)
-    window = create_main_window(object())
+    window = create_main_window(Database(tmp_path / "bootstrap.sqlite3"))
     assert calls == []
     window.show()
     deadline = time.monotonic() + 2
@@ -477,13 +598,17 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
         "client", "secret", "central_europe", Currency.RON
     )
     refresh_observations = []
+    settings_load_threads = []
+    gui_thread = threading.get_ident()
     row = representative_row()
 
     class FakeSettingsDialog(QObject):
         error_raised = Signal(object)
         settings_saved = Signal(object)
 
-        def __init__(self, service, regions, parent=None):
+        def __init__(
+            self, service, regions, parent=None, *, initial_settings=None
+        ):
             super().__init__(parent)
             self.service = service
 
@@ -501,9 +626,14 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
         refresh_observations.append((active_settings, persisted))
         return [DeviceRefreshResult(row.device, row.latest_reading, row.latest_reading)]
 
+    def prepare_settings(db):
+        settings_load_threads.append(threading.get_ident())
+        return _prepare_settings(db)
+
     monkeypatch.setattr("tatatuya.ui.app.SettingsDialog", FakeSettingsDialog)
     monkeypatch.setattr("tatatuya.ui.app._load_initial_state", initial_state)
     monkeypatch.setattr("tatatuya.ui.app._refresh_workflow", refresh)
+    monkeypatch.setattr("tatatuya.ui.app._prepare_settings", prepare_settings)
 
     window = create_main_window(database)
     window.show()
@@ -525,6 +655,7 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
     qt_app.processEvents()
 
     assert refresh_observations == [(settings, settings)]
+    assert settings_load_threads and settings_load_threads[0] != gui_thread
     assert window.table.rowCount() == 1
     window.close()
 

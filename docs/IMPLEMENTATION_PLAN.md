@@ -9,6 +9,12 @@
 The phases are ordered to establish testable business behavior before relying on
 the GUI. A phase is complete only when its acceptance checks pass.
 
+Post-Phase-9 checkpoint: the architecture review reopened acceptance for Phases
+1, 4, 5, and 7. The bounded correction work specified in
+`docs/REMEDIATION_PLAN.md` has passed the Phase 9A automated and rendered-UI
+gates. Phase 10 was completed in the same pass because its safe-error work was
+part of the remediation boundary.
+
 ## Phase 1: Project foundation
 
 - [x] Add `pyproject.toml` with runtime, development, test, and packaging tools.
@@ -160,13 +166,47 @@ Acceptance:
 - Info cannot rename or control a Tuya device.
 - Status retains raw technical data and records any usable energy reading.
 
+## Phase 9A: Post-implementation architecture remediation
+
+- [x] Retire the obsolete `.env`-driven Tuya client and unsafe diagnostic tools.
+- [x] Classify supported meters separately from unrelated Tuya devices.
+- [x] Support the documented `forward_energy_total` and
+  `total_forward_energy` aliases and Tuya middle-dot Wh/kWh spellings.
+- [x] Preserve visible history access for meters missing from later discovery.
+- [x] Persist redacted raw specifications on devices and new readings through an
+  ordered migration.
+- [x] Move Settings initialization, loading, saving, and commit off the Qt UI
+  thread.
+- [x] Log unexpected exceptions and show only safe generic Romanian errors.
+- [x] Add the expandable/copyable shared Romanian error dialog.
+- [x] Add migration, mixed-account, disappeared-meter, Settings-thread, error,
+  and rendered-geometry tests.
+- [x] Reconcile product and architecture documentation with the implemented
+  lifecycle behavior.
+- [x] Pass the configured Ruff and Pyright checks without baseline exclusions.
+
+Acceptance:
+
+- Unsupported non-meter devices are not presented as billable meters.
+- Supported Tuya meter/circuit-breaker aliases are matched exactly to their
+  status value and normalized from the device-provided scale and unit.
+- Previously historical meters remain reachable when absent or newly
+  unsupported, without guessing new readings.
+- Every new reading retains the redacted specification used to normalize it.
+- Settings database work cannot block the Qt UI thread.
+- Unexpected exceptions are logged and cannot expose raw exception details in
+  the UI.
+- The active source tree contains one production Tuya client and no tracked real
+  credential or device-specific diagnostic values.
+- Focused and full suites pass, and changed layouts are screenshot-inspected.
+
 ## Phase 10: Central errors and logging
 
-- [ ] Implement the shared Romanian error modal.
-- [ ] Support optional expandable and copyable technical details.
-- [ ] Catch expected user-facing exceptions at the UI boundary.
-- [ ] Log unexpected errors locally and show a safe generic message.
-- [ ] Verify loading state cleanup across all worker failure paths.
+- [x] Implement the shared Romanian error modal.
+- [x] Support optional expandable and copyable technical details.
+- [x] Catch expected user-facing exceptions at the UI boundary.
+- [x] Log unexpected errors locally and show a safe generic message.
+- [x] Verify loading state cleanup across all worker failure paths.
 
 Acceptance:
 

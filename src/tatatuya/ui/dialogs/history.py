@@ -20,10 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from tatatuya.domain.models import Device, Reading
-from tatatuya.services.history_service import (
-    CalculationHistoryItem,
-    HistoryContext,
-)
+from tatatuya.services.history_service import HistoryContext
 from tatatuya.ui import text
 from tatatuya.ui.formatters import (
     format_decimal,
@@ -231,8 +228,9 @@ class HistoryDialog(QDialog):
     def _clear_detail(self) -> None:
         while self.detail_grid.count():
             item = self.detail_grid.takeAt(0)
-            if item is not None and item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget() if item is not None else None
+            if widget is not None:
+                widget.deleteLater()
 
 
 def reading_detail(reading: Reading) -> str:

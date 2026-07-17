@@ -81,11 +81,16 @@ class SettingsDialog(QDialog):
         service: SettingsService,
         regions: Mapping[str, str],
         parent: QWidget | None = None,
+        *,
+        initial_settings: TuyaSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.regions = dict(regions)
         self.active_thread: WorkflowThread | None = None
+        self._active_operation: str | None = None
+        self._pending_saved: SavedSettings | None = None
+        self._save_was_verified = False
         self._close_when_idle = False
         self._verified_settings: TuyaSettings | None = None
         self._has_test_result = False
@@ -93,7 +98,7 @@ class SettingsDialog(QDialog):
         self.setModal(True)
         self.resize(620, 540)
         self._build_ui()
-        self._populate(service.load())
+        self._populate(initial_settings)
         self._connect_verification_invalidation()
 
     def _build_ui(self) -> None:
@@ -202,13 +207,41 @@ class SettingsDialog(QDialog):
         self.feedback.style().unpolish(self.feedback)
         self.feedback.style().polish(self.feedback)
         self._set_actions_enabled(False)
+        self._active_operation = "test"
         thread = WorkflowThread(lambda: self.service.test_connection(settings), self)
-        thread.succeeded.connect(self._test_succeeded)
-        thread.failed.connect(self._test_failed)
+        thread.succeeded.connect(self._operation_succeeded)
+        thread.failed.connect(self._operation_failed)
         thread.finished.connect(self._thread_finished)
         thread.finished.connect(thread.deleteLater)
         self.active_thread = thread
         thread.start()
+
+    def _operation_succeeded(self, payload: object) -> None:
+        if self._active_operation == "test":
+            self._test_succeeded(payload)
+            return
+        if self._active_operation == "save":
+            if isinstance(payload, TuyaSettings):
+                self._pending_saved = SavedSettings(
+                    payload, self._save_was_verified
+                )
+            else:
+                self._operation_failed(
+                    UserFacingError(
+                        "Salvare nereușită",
+                        "Setările nu au putut fi confirmate după salvare.",
+                    )
+                )
+
+    def _operation_failed(self, error: UserFacingError) -> None:
+        if self._active_operation == "test":
+            self._test_failed(error)
+            return
+        self.feedback.setText(text.SETTINGS_SAVE_FAILED)
+        self.feedback.setProperty("state", "error")
+        self.feedback.style().unpolish(self.feedback)
+        self.feedback.style().polish(self.feedback)
+        self.error_raised.emit(error)
 
     def _test_succeeded(self, payload: object) -> None:
         if not isinstance(payload, ConnectionTestResult):
@@ -254,6 +287,13 @@ class SettingsDialog(QDialog):
 
     def _thread_finished(self) -> None:
         self.active_thread = None
+        self._active_operation = None
+        if self._pending_saved is not None:
+            saved = self._pending_saved
+            self._pending_saved = None
+            self.settings_saved.emit(saved)
+            super().accept()
+            return
         if self._close_when_idle:
             super().reject()
         else:
@@ -270,19 +310,27 @@ class SettingsDialog(QDialog):
         self.feedback.style().polish(self.feedback)
 
     def save(self) -> None:
+        if self.active_thread is not None:
+            return
         try:
-            saved = self.service.save(self.current_settings())
+            settings = self.service.validate(self.current_settings())
         except UserFacingError as error:
             self.error_raised.emit(error)
             return
-        self.settings_saved.emit(
-            SavedSettings(
-                saved,
-                self._verified_settings is not None
-                and _connection_key(saved) == _connection_key(self._verified_settings),
-            )
+        self._save_was_verified = (
+            self._verified_settings is not None
+            and _connection_key(settings) == _connection_key(self._verified_settings)
         )
-        super().accept()
+        self.feedback.setText(text.SAVING_SETTINGS)
+        self._set_actions_enabled(False)
+        self._active_operation = "save"
+        thread = WorkflowThread(lambda: self.service.save(settings), self)
+        thread.succeeded.connect(self._operation_succeeded)
+        thread.failed.connect(self._operation_failed)
+        thread.finished.connect(self._thread_finished)
+        thread.finished.connect(thread.deleteLater)
+        self.active_thread = thread
+        thread.start()
 
     def _set_actions_enabled(self, enabled: bool) -> None:
         for field in (

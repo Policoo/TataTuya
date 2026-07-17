@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "result": {
+    "status": [
+      {
+        "code": "total_forward_energy",
+        "type": "Integer",
+        "values": {
+          "unit": "kW·h",
+          "min": 0,
+          "max": 99999999,
+          "scale": 2,
+          "step": 1
+        }
+      }
+    ]
+  }
+}

@@ -110,3 +110,22 @@ def test_rejects_unsupported_reading_unit() -> None:
     )
     with pytest.raises(UserFacingError, match="unitate neacceptată"):
         calculate_period(start, unsupported, Decimal("1"), Currency.RON, NOW)
+
+
+def test_accepts_tuya_middle_dot_kwh_readings() -> None:
+    start = Reading(
+        "meter-1", NOW, "10000", 2, "kW·h", Decimal("100"), "batch", "{}", 1
+    )
+    end = Reading(
+        "meter-1",
+        NOW + timedelta(days=1),
+        "11250",
+        2,
+        "kW·h",
+        Decimal("112.5"),
+        "batch",
+        "{}",
+        2,
+    )
+    result = calculate_period(start, end, Decimal("0.8"), Currency.RON, NOW)
+    assert result.consumption_kwh == Decimal("12.5")

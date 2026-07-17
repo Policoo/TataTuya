@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
+from tatatuya.domain.energy import canonical_energy_unit
+from tatatuya.domain.errors import (
+    EnergySpecificationError,
+    UnsupportedEnergyDeviceError,
+)
 from tatatuya.domain.models import (
     Device,
     DeviceStatus,
@@ -15,8 +20,13 @@ from tatatuya.domain.models import (
 )
 
 
-class TuyaPayloadError(ValueError):
+class TuyaPayloadError(EnergySpecificationError, ValueError):
     """Raised when a successful Tuya envelope has an unusable shape."""
+
+
+SUPPORTED_FORWARD_ENERGY_CODES = frozenset(
+    {"forward_energy_total", "total_forward_energy"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,14 +41,20 @@ def parse_devices(result: Any) -> list[Device]:
 
 
 def parse_device_page(result: Any) -> DevicePage:
-    rows = _find_list(result, ("list", "devices", "data"))
+    rows = _require_list(result, ("list", "devices", "data"), "Device collection")
     devices: list[Device] = []
     for row in rows:
         if not isinstance(row, Mapping):
-            continue
+            raise TuyaPayloadError(
+                "Device collection contains a non-object row",
+                _dump(redact_sensitive_fields(result)),
+            )
         device_id = row.get("id") or row.get("device_id")
         if not device_id:
-            continue
+            raise TuyaPayloadError(
+                "Device collection contains a row without an ID",
+                _dump(redact_sensitive_fields(result)),
+            )
         name = row.get("name") or row.get("custom_name") or row.get("product_name")
         devices.append(
             Device(
@@ -49,40 +65,86 @@ def parse_device_page(result: Any) -> DevicePage:
                 category=_optional_string(row.get("category")),
                 online=row.get("online") if isinstance(row.get("online"), bool) else None,
                 raw_device_json=_dump(redact_sensitive_fields(row)),
+                present_in_tuya=True,
             )
         )
-    has_more = result.get("has_more") is True if isinstance(result, Mapping) else False
+    raw_has_more = (
+        result.get("has_more", False) if isinstance(result, Mapping) else False
+    )
+    if not isinstance(raw_has_more, bool):
+        raise TuyaPayloadError(
+            "Device pagination has_more is not boolean",
+            _dump(redact_sensitive_fields(result)),
+        )
+    has_more = raw_has_more
     raw_cursor = result.get("last_row_key") if isinstance(result, Mapping) else None
+    if raw_cursor not in (None, "") and not isinstance(raw_cursor, (str, int)):
+        raise TuyaPayloadError(
+            "Device pagination cursor is invalid",
+            _dump(redact_sensitive_fields(result)),
+        )
     cursor = str(raw_cursor) if raw_cursor not in (None, "") else None
+    if has_more and cursor is None:
+        raise TuyaPayloadError(
+            "Device pagination cursor is missing",
+            _dump(redact_sensitive_fields(result)),
+        )
     return DevicePage(tuple(devices), has_more, cursor)
 
 
 def parse_energy_specification(result: Any) -> EnergySpecification:
+    raw_json = _dump(redact_sensitive_fields(result))
     if not isinstance(result, Mapping):
-        raise TuyaPayloadError("Specification result is not an object")
-    candidates: list[EnergySpecification] = []
-    for row in _find_list(result.get("status"), ("list",)):
-        if not isinstance(row, Mapping) or row.get("code") != "forward_energy_total":
-            continue
-        values = row.get("values")
-        if isinstance(values, str):
-            try:
-                values = json.loads(values)
-            except json.JSONDecodeError as exc:
-                raise TuyaPayloadError("Energy specification values are invalid JSON") from exc
-        if not isinstance(values, Mapping):
-            raise TuyaPayloadError("Energy specification values are missing")
-        scale = values.get("scale")
-        unit = values.get("unit")
-        if isinstance(scale, bool) or not isinstance(scale, int) or not isinstance(unit, str):
-            raise TuyaPayloadError("Energy specification scale or unit is invalid")
-        candidates.append(EnergySpecification("forward_energy_total", unit, scale))
+        raise TuyaPayloadError("Specification result is not an object", raw_json)
+    rows = _require_list(
+        result.get("status"), ("list",), "Specification status collection", raw_json
+    )
+    if any(
+        not isinstance(row, Mapping) or not isinstance(row.get("code"), str)
+        for row in rows
+    ):
+        raise TuyaPayloadError(
+            "Specification status collection contains an invalid row", raw_json
+        )
+    candidates = [row for row in rows if row.get("code") in SUPPORTED_FORWARD_ENERGY_CODES]
+    if not candidates:
+        raise UnsupportedEnergyDeviceError(
+            "Device has no supported cumulative forward-energy specification",
+            raw_json,
+        )
     if len(candidates) != 1:
         raise TuyaPayloadError(
-            "Expected exactly one forward_energy_total status specification, "
-            f"found {len(candidates)}"
+            "Expected exactly one supported cumulative forward-energy specification, "
+            f"found {len(candidates)}",
+            raw_json,
         )
-    return candidates[0]
+    values = candidates[0].get("values")
+    if isinstance(values, str):
+        try:
+            values = json.loads(values)
+        except json.JSONDecodeError as exc:
+            raise TuyaPayloadError(
+                "Energy specification values are invalid JSON", raw_json
+            ) from exc
+    if not isinstance(values, Mapping):
+        raise TuyaPayloadError("Energy specification values are missing", raw_json)
+    scale = values.get("scale")
+    unit = values.get("unit")
+    if (
+        isinstance(scale, bool)
+        or not isinstance(scale, int)
+        or scale < 0
+        or not isinstance(unit, str)
+        or not unit.strip()
+    ):
+        raise TuyaPayloadError(
+            "Energy specification scale or unit is invalid", raw_json
+        )
+    if canonical_energy_unit(unit) is None:
+        raise UnsupportedEnergyDeviceError(
+            "Energy specification unit is unsupported", raw_json
+        )
+    return EnergySpecification(str(candidates[0]["code"]), unit, scale, raw_json)
 
 
 def parse_individual_status(device_id: str, result: Any) -> DeviceStatus:
@@ -129,6 +191,25 @@ def _find_list(value: Any, nested_keys: Sequence[str]) -> list[Any]:
             if isinstance(nested, list):
                 return nested
     return []
+
+
+def _require_list(
+    value: Any,
+    nested_keys: Sequence[str],
+    description: str,
+    raw_json: str | None = None,
+) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, Mapping):
+        for key in nested_keys:
+            if key in value:
+                nested = value[key]
+                if isinstance(nested, list):
+                    return nested
+                break
+    diagnostic = raw_json or _dump(redact_sensitive_fields(value))
+    raise TuyaPayloadError(f"{description} is missing or invalid", diagnostic)
 
 
 def _optional_string(value: Any) -> str | None:

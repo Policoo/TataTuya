@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tatatuya.domain.models import Device, Reading
+from tatatuya.domain.models import Device, EnergyEligibility, Reading
 from tatatuya.ui import text
 from tatatuya.ui.formatters import format_energy, format_local_datetime, online_label
 
@@ -26,6 +26,16 @@ class DeviceTableRow:
     device: Device
     latest_reading: Reading | None = None
     error_message: str | None = None
+
+
+def should_show_device(device: Device, latest_reading: Reading | None) -> bool:
+    if latest_reading is not None:
+        return True
+    if device.energy_eligibility is EnergyEligibility.SUPPORTED:
+        return True
+    if device.energy_eligibility is EnergyEligibility.UNSUPPORTED:
+        return False
+    return device.present_in_tuya is True
 
 
 class DeviceTable(QTableWidget):
@@ -63,7 +73,11 @@ class DeviceTable(QTableWidget):
             name_item = QTableWidgetItem(row.device.name)
             name_item.setToolTip(row.device.name)
             self.setItem(row_index, 0, name_item)
-            state = online_label(row.device.online)
+            state = (
+                text.NOT_IN_TUYA
+                if row.device.present_in_tuya is False
+                else online_label(row.device.online)
+            )
             state_item = QTableWidgetItem(state)
             if row.error_message:
                 state_item.setToolTip(row.error_message)
@@ -120,4 +134,7 @@ class RowActions(QWidget):
             button = QPushButton(label)
             button.setObjectName("RowActionButton")
             button.clicked.connect(lambda checked=False, s=signal: s.emit(device))
+            if label == text.STATUS and device.present_in_tuya is False:
+                button.setEnabled(False)
+                button.setToolTip(text.STATUS_UNAVAILABLE)
             layout.addWidget(button)

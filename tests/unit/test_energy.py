@@ -13,6 +13,8 @@ from tatatuya.domain.errors import UserFacingError
         (123456, 2, "kWh", Decimal("1234.56")),
         (1234567, 3, "kWh", Decimal("1234.567")),
         (123456, 2, "Wh", Decimal("1.23456")),
+        (123456, 2, "kW·h", Decimal("1234.56")),
+        (123456, 2, "W·h", Decimal("1.23456")),
     ],
 )
 def test_normalize_energy(raw, scale, unit, expected) -> None:

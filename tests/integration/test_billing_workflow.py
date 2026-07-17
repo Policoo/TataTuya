@@ -49,6 +49,7 @@ def test_saved_preview_and_meter_preference_survive_restart(tmp_path) -> None:
         )
         context = service.prepare("meter-1", Currency.RON)
         start, end = context.readings[0], context.readings[-1]
+        assert start.id is not None and end.id is not None
         preview = service.preview(start, end, "0,80", Currency.RON, None)
         saved = service.save_calculation(
             "meter-1", start.id, end.id, "0,80", Currency.RON
@@ -87,6 +88,7 @@ def test_calculation_and_preference_update_roll_back_together(tmp_path) -> None:
         with database.connect() as connection:
             readings = ReadingRepository(connection)
             values = readings.list_for_device("meter-1")
+            assert values[0].id is not None and values[-1].id is not None
             BillingService(
                 readings,
                 CalculationRepository(connection),

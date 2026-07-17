@@ -5,7 +5,13 @@ import sqlite3
 import pytest
 
 from tatatuya.domain.billing import calculate_period
-from tatatuya.domain.models import Currency, Device, Reading, TuyaSettings
+from tatatuya.domain.models import (
+    Currency,
+    Device,
+    EnergyEligibility,
+    Reading,
+    TuyaSettings,
+)
 from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure import migrations
 from tatatuya.infrastructure.repositories.calculations import (
@@ -39,7 +45,7 @@ def test_empty_database_migrates_idempotently(tmp_path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert [row[0] for row in versions] == [1, 2]
+    assert [row[0] for row in versions] == [1, 2, 3]
     assert {"settings", "devices", "readings", "calculations"} <= tables
 
 
@@ -100,7 +106,60 @@ def test_upgrade_removes_obsolete_account_uid_setting(tmp_path, monkeypatch) -> 
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert [row[0] for row in versions] == [1, 2]
+    assert [row[0] for row in versions] == [1, 2, 3]
+
+
+def test_version_two_upgrade_preserves_history_with_unknown_presence(
+    tmp_path, monkeypatch
+) -> None:
+    database = Database(tmp_path / "version-two.sqlite3")
+    all_migrations = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations[:2])
+    database.initialize()
+    with database.connect() as connection:
+        timestamp = NOW.isoformat()
+        connection.execute(
+            """
+            INSERT INTO devices(
+                device_id, name, raw_device_json,
+                first_seen_at_utc, last_seen_at_utc
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            ("meter-1", "Casa", "{}", timestamp, timestamp),
+        )
+        cursor = connection.execute(
+            """
+            INSERT INTO readings(
+                device_id, recorded_at_utc, raw_value, scale, source_unit,
+                value_kwh, source, raw_status_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "meter-1",
+                timestamp,
+                "12345",
+                2,
+                "kWh",
+                "123.45",
+                "batch",
+                '{"status":"legacy"}',
+            ),
+        )
+        assert cursor.lastrowid is not None
+        legacy_reading_id = int(cursor.lastrowid)
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations)
+    database.initialize()
+    with database.connect() as connection:
+        upgraded_device = DeviceRepository(connection).get("meter-1")
+        upgraded_reading = ReadingRepository(connection).get(legacy_reading_id)
+
+    assert upgraded_device is not None
+    assert upgraded_device.energy_eligibility is EnergyEligibility.UNKNOWN
+    assert upgraded_device.present_in_tuya is None
+    assert upgraded_reading is not None
+    assert upgraded_reading.value_kwh == Decimal("123.45")
+    assert upgraded_reading.raw_specification_json == "{}"
 
 
 def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:

@@ -6,6 +6,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from tatatuya.domain.models import Currency, TuyaSettings
+from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure.repositories._mapping import to_utc_text
 
 
@@ -71,3 +72,22 @@ class SettingsRepository:
             region=values[SETTING_REGION] or "",
             currency=Currency(values[SETTING_CURRENCY] or Currency.RON.value),
         )
+
+
+class DatabaseSettingsStore:
+    """Thread-safe settings adapter that owns one connection per operation."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def save_tuya(
+        self,
+        settings: TuyaSettings,
+        updated_at_utc: datetime | None = None,
+    ) -> None:
+        with self.database.connect() as connection:
+            SettingsRepository(connection).save_tuya(settings, updated_at_utc)
+
+    def load_tuya(self) -> TuyaSettings | None:
+        with self.database.connect() as connection:
+            return SettingsRepository(connection).load_tuya()

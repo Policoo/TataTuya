@@ -14,6 +14,12 @@ class Currency(StrEnum):
     EUR = "EUR"
 
 
+class EnergyEligibility(StrEnum):
+    UNKNOWN = "unknown"
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+
+
 @dataclass(frozen=True, slots=True)
 class TuyaSettings:
     client_id: str
@@ -34,6 +40,7 @@ class EnergySpecification:
     code: str
     unit: str
     scale: int
+    raw_json: str = "{}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +74,9 @@ class Device:
     raw_device_json: str = "{}"
     first_seen_at_utc: datetime | None = None
     last_seen_at_utc: datetime | None = None
+    energy_eligibility: EnergyEligibility = EnergyEligibility.UNKNOWN
+    present_in_tuya: bool | None = None
+    raw_specification_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +90,7 @@ class Reading:
     source: str
     raw_status_json: str
     id: int | None = None
+    raw_specification_json: str = "{}"
 
 
 @dataclass(frozen=True, slots=True)

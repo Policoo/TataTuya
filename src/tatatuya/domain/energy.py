@@ -8,6 +8,16 @@ from typing import Any
 from tatatuya.domain.errors import UserFacingError
 
 
+def canonical_energy_unit(unit: str) -> str | None:
+    """Map explicitly supported Tuya spellings to the billing unit meaning."""
+    normalized = unit.strip().lower().replace(" ", "").replace("·", "")
+    if normalized == "kwh":
+        return "kWh"
+    if normalized == "wh":
+        return "Wh"
+    return None
+
+
 def canonical_decimal(value: Decimal) -> str:
     """Serialize a finite Decimal without exponent notation or redundant zeros."""
     if not value.is_finite():
@@ -35,10 +45,10 @@ def normalize_energy(raw_value: Any, scale: int, unit: str) -> Decimal:
     if not raw_decimal.is_finite():
         _raise_invalid_value(raw_value)
 
-    normalized_unit = unit.strip().lower().replace(" ", "")
-    if normalized_unit == "kwh":
+    normalized_unit = canonical_energy_unit(unit)
+    if normalized_unit == "kWh":
         return _shift_decimal(raw_decimal, scale)
-    if normalized_unit == "wh":
+    if normalized_unit == "Wh":
         return _shift_decimal(raw_decimal, scale + 3)
     raise UserFacingError(
         "Unitate necunoscută",
