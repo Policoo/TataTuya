@@ -87,7 +87,11 @@ def parse_energy_specification(result: Any) -> EnergySpecification:
 
 def parse_individual_status(device_id: str, result: Any) -> DeviceStatus:
     rows = _find_list(result, ("status", "list"))
-    return DeviceStatus(str(device_id), _parse_status_values(rows), _dump(result))
+    return DeviceStatus(
+        str(device_id),
+        _parse_status_values(rows),
+        _dump(redact_sensitive_fields(result)),
+    )
 
 
 def parse_batch_status(result: Any) -> dict[str, DeviceStatus]:
@@ -101,7 +105,9 @@ def parse_batch_status(result: Any) -> dict[str, DeviceStatus]:
             continue
         status_rows = _find_list(row.get("status"), ("list",))
         parsed[str(device_id)] = DeviceStatus(
-            str(device_id), _parse_status_values(status_rows), _dump(row)
+            str(device_id),
+            _parse_status_values(status_rows),
+            _dump(redact_sensitive_fields(row)),
         )
     return parsed
 

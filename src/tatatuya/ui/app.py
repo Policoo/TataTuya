@@ -21,12 +21,16 @@ from tatatuya.infrastructure.repositories.settings import SettingsRepository
 from tatatuya.infrastructure.tuya.client import TuyaClient
 from tatatuya.services.billing_service import BillingService, CalculationContext
 from tatatuya.services.device_service import DeviceService
-from tatatuya.services.reading_service import ReadingService
+from tatatuya.services.history_service import HistoryContext, HistoryService
+from tatatuya.services.reading_service import ReadingService, StatusCaptureResult
 from tatatuya.services.settings_service import SettingsService
 from tatatuya.ui import text
 from tatatuya.ui.components.device_table import DeviceTableRow
 from tatatuya.ui.components.modal import AppModal
 from tatatuya.ui.dialogs.calculate import CalculationDialog
+from tatatuya.ui.dialogs.device_info import DeviceInfoDialog
+from tatatuya.ui.dialogs.device_status import DeviceStatusDialog
+from tatatuya.ui.dialogs.history import HistoryDialog
 from tatatuya.ui.dialogs.settings import REGION_LABELS, SavedSettings, SettingsDialog
 from tatatuya.ui.main_window import InitialState, MainWindow
 
@@ -99,6 +103,33 @@ def _save_calculation(
         )
 
 
+def _prepare_history(database: Database, device_id: str) -> HistoryContext:
+    database.initialize()
+    with database.connect() as connection:
+        return HistoryService(
+            ReadingRepository(connection),
+            CalculationRepository(connection),
+        ).prepare(device_id)
+
+
+def _capture_status(database: Database, device_id: str) -> StatusCaptureResult:
+    database.initialize()
+    with database.connect() as connection:
+        settings = SettingsRepository(connection).load_tuya()
+        if settings is None or not settings.is_complete:
+            raise UserFacingError(
+                "Setări incomplete",
+                "Configurați conexiunea Tuya înainte de a încărca statusul.",
+            )
+        gateway = TuyaClient(settings)
+        devices = DeviceRepository(connection)
+        return ReadingService(
+            gateway,
+            DeviceService(gateway, devices),
+            ReadingRepository(connection),
+        ).capture_individual_status(device_id)
+
+
 def create_main_window(database: Database | None = None) -> MainWindow:
     database = database or Database()
     window = MainWindow(bootstrap_workflow=lambda: _load_initial_state(database))
@@ -164,8 +195,40 @@ def create_main_window(database: Database | None = None) -> MainWindow:
             text.PREPARING_CALCULATION,
         )
 
+    def show_history(device) -> None:
+        def open_dialog(payload: object) -> None:
+            if not isinstance(payload, HistoryContext):
+                return
+            HistoryDialog(device, payload, window).exec()
+
+        window.run_background_operation(
+            lambda: _prepare_history(database, device.device_id),
+            open_dialog,
+            text.PREPARING_HISTORY,
+        )
+
+    def show_info(device) -> None:
+        DeviceInfoDialog(device, window).exec()
+
+    def show_status(device) -> None:
+        def open_dialog(payload: object) -> None:
+            if not isinstance(payload, StatusCaptureResult):
+                return
+            if payload.reading is not None:
+                window.apply_individual_reading(device.device_id, payload.reading)
+            DeviceStatusDialog(device, payload, window).exec()
+
+        window.run_background_operation(
+            lambda: _capture_status(database, device.device_id),
+            open_dialog,
+            text.LOADING_STATUS,
+        )
+
     window.settings_requested.connect(show_settings)
     window.calculation_requested.connect(show_calculation)
+    window.history_requested.connect(show_history)
+    window.info_requested.connect(show_info)
+    window.status_requested.connect(show_status)
     window.error_raised.connect(show_error)
     QTimer.singleShot(0, window.load_initial_state)
     return window

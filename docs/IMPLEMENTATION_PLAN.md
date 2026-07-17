@@ -147,12 +147,12 @@ Acceptance:
 
 ## Phase 9: History, Info, and Status
 
-- [ ] Build read-only `Citiri` and `Calcule` history tabs.
-- [ ] Add full calculation detail display.
-- [ ] Add translated device Info with no mutation controls.
-- [ ] Add raw Status diagnostics with unchanged Tuya codes.
-- [ ] Record energy when Status performs an individual API call.
-- [ ] Add empty-history and error-state UI tests.
+- [x] Build read-only `Citiri` and `Calcule` history tabs.
+- [x] Add full calculation detail display.
+- [x] Add translated device Info with no mutation controls.
+- [x] Add raw Status diagnostics with unchanged Tuya codes.
+- [x] Record energy when Status performs an individual API call.
+- [x] Add empty-history and error-state UI tests.
 
 Acceptance:
 

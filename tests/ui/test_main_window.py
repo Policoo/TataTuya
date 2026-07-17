@@ -128,6 +128,77 @@ def test_calculate_row_action_is_forwarded_with_its_device() -> None:
     window.close()
 
 
+def test_history_row_action_is_forwarded_with_its_device() -> None:
+    qt_app = app()
+    row = representative_row()
+    window = MainWindow(cached_rows=[row], settings_configured=True)
+    requested = []
+    window.history_requested.connect(requested.append)
+    window.show()
+    qt_app.processEvents()
+
+    action_widget = window.table.cellWidget(0, 4)
+    history = next(
+        button
+        for button in action_widget.findChildren(QPushButton)
+        if button.text() == text.HISTORY
+    )
+    history.click()
+    qt_app.processEvents()
+
+    assert requested == [row.device]
+    window.close()
+
+
+def test_info_and_status_row_actions_are_forwarded_with_their_device() -> None:
+    qt_app = app()
+    row = representative_row()
+    window = MainWindow(cached_rows=[row], settings_configured=True)
+    info_requested = []
+    status_requested = []
+    window.info_requested.connect(info_requested.append)
+    window.status_requested.connect(status_requested.append)
+    window.show()
+    qt_app.processEvents()
+
+    action_widget = window.table.cellWidget(0, 4)
+    buttons = {
+        button.text(): button for button in action_widget.findChildren(QPushButton)
+    }
+    buttons[text.INFO].click()
+    buttons[text.STATUS].click()
+    qt_app.processEvents()
+
+    assert info_requested == [row.device]
+    assert status_requested == [row.device]
+    window.close()
+
+
+def test_individual_status_reading_updates_the_cached_main_table_row() -> None:
+    qt_app = app()
+    row = representative_row()
+    updated = Reading(
+        row.device.device_id,
+        datetime(2026, 12, 3, 19, 15, tzinfo=UTC),
+        "124706",
+        2,
+        "kWh",
+        Decimal("1247.06"),
+        "status",
+        "{}",
+        2,
+    )
+    window = MainWindow(cached_rows=[row], settings_configured=True)
+    window.show()
+
+    window.apply_individual_reading(row.device.device_id, updated)
+    qt_app.processEvents()
+
+    assert window.table.rows[0].latest_reading is updated
+    assert window.table.item(0, 2).text() == "1.247,06 kWh"
+    window.close()
+
+
 def test_calculation_preparation_runs_off_gui_thread_and_restores_controls() -> None:
     qt_app = app()
     gui_thread = threading.get_ident()

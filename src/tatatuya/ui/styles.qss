@@ -246,6 +246,54 @@ QLabel#CalculationMeter {
     font-weight: 700;
 }
 
+QLabel#HistoryMeter {
+    color: #101828;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QLabel#HistoryEmpty {
+    color: #667085;
+    font-size: 14px;
+}
+
+QLabel#SectionTitle {
+    color: #344054;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QLabel#StatusCaptureFeedback {
+    background: #eef3f8;
+    color: #344054;
+    border: 1px solid #d9e2ec;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+QLabel#StatusCaptureFeedback[state="success"] {
+    background: #ecfdf3;
+    color: #157347;
+    border-color: #a6e3bd;
+}
+
+QLabel#StatusCaptureFeedback[state="warning"] {
+    background: #fff8e8;
+    color: #8a5700;
+    border-color: #f0d391;
+}
+
+QPlainTextEdit#RawStatus {
+    background: #ffffff;
+    color: #182230;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px;
+}
+
 QFrame#CalculationResult {
     background: #eef5ff;
     border: 1px solid #bfd3f8;

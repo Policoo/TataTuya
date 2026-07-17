@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from tatatuya.domain.errors import UserFacingError
+from tatatuya.domain.models import Reading
 from tatatuya.services.reading_service import DeviceRefreshResult
 from tatatuya.ui import text
 from tatatuya.ui.components.device_table import DeviceTable, DeviceTableRow
@@ -37,6 +38,9 @@ class InitialState:
 class MainWindow(QMainWindow):
     settings_requested = Signal()
     calculation_requested = Signal(object)
+    history_requested = Signal(object)
+    info_requested = Signal(object)
+    status_requested = Signal(object)
     error_raised = Signal(object)
 
     def __init__(
@@ -107,6 +111,9 @@ class MainWindow(QMainWindow):
         self.content = QStackedWidget()
         self.table = DeviceTable()
         self.table.calculate_requested.connect(self.calculation_requested)
+        self.table.history_requested.connect(self.history_requested)
+        self.table.info_requested.connect(self.info_requested)
+        self.table.status_requested.connect(self.status_requested)
         self.content.addWidget(self.table)
         self.loading_state = self._state_panel(
             text.LOADING_LOCAL_TITLE,
@@ -240,6 +247,16 @@ class MainWindow(QMainWindow):
         )
         if connection_verified and refresh_when_verified:
             self._schedule_refresh()
+
+    def apply_individual_reading(self, device_id: str, reading: Reading) -> None:
+        """Display a reading captured by the individual Status workflow."""
+        rows = [
+            DeviceTableRow(row.device, reading, None)
+            if row.device.device_id == device_id
+            else row
+            for row in self.table.rows
+        ]
+        self.set_rows(rows)
 
     def run_background_operation(
         self,

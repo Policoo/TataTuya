@@ -67,3 +67,33 @@ def test_decimal_status_diagnostic_remains_an_exact_json_number() -> None:
     raw_value = json.loads(status.raw_json, parse_float=Decimal)[0]["value"]
     assert raw_value == Decimal("0.12345678901234567890123456789")
     assert isinstance(raw_value, Decimal)
+
+
+def test_status_diagnostics_redact_unexpected_sensitive_fields() -> None:
+    individual = parse_individual_status(
+        "meter-1",
+        {
+            "status": [{"code": "forward_energy_total", "value": 123456}],
+            "debug": {
+                "access_token": "must-not-be-visible",
+                "local_key": "device-secret",
+            },
+        },
+    )
+    batch = parse_batch_status(
+        [
+            {
+                "id": "meter-1",
+                "status": [{"code": "forward_energy_total", "value": 123456}],
+                "client_secret": "must-not-be-visible",
+            }
+        ]
+    )
+
+    assert individual.value_for("forward_energy_total") == 123456
+    assert batch["meter-1"].value_for("forward_energy_total") == 123456
+    assert "must-not-be-visible" not in individual.raw_json
+    assert "device-secret" not in individual.raw_json
+    assert "must-not-be-visible" not in batch["meter-1"].raw_json
+    assert individual.raw_json.count("[REDACTED]") == 2
+    assert "[REDACTED]" in batch["meter-1"].raw_json
