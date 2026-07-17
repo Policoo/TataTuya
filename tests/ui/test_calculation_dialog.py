@@ -6,7 +6,8 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QColor, QPalette, QPixmap
+from PySide6.QtWidgets import QApplication, QLabel
 
 from tatatuya.domain.models import Currency, Device, Reading
 from tatatuya.services.billing_service import CalculationContext
@@ -207,3 +208,55 @@ def test_no_remembered_price_requires_input_for_total() -> None:
     assert errors and errors[0].title == "Preț lipsă"
     assert dialog.isVisible()
     dialog.close()
+
+
+def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None:
+    qt_app = app()
+    original = qt_app.palette()
+    dark = QPalette(original)
+    dark.setColor(QPalette.ColorRole.Window, QColor("#202124"))
+    dark.setColor(QPalette.ColorRole.WindowText, QColor("#f8fafc"))
+    dark.setColor(QPalette.ColorRole.Base, QColor("#101114"))
+    dark.setColor(QPalette.ColorRole.Text, QColor("#f8fafc"))
+    dark.setColor(QPalette.ColorRole.Highlight, QColor("#000000"))
+    dark.setColor(QPalette.ColorRole.HighlightedText, QColor("#000000"))
+    qt_app.setPalette(dark)
+    qt_app.setStyleSheet(load_stylesheet())
+    try:
+        dialog = CalculationDialog(
+            Device("meter-1", "Contor principal — Strada Independenței"),
+            context(),
+            Service(),
+        )
+        dialog.show()
+        qt_app.processEvents()
+
+        labels = dialog.findChildren(QLabel, "FieldLabel")
+        assert len(labels) == 8
+        assert all(label.isVisible() and not label.geometry().isEmpty() for label in labels)
+        assert all(
+            label.palette().color(QPalette.ColorRole.WindowText) == QColor("#667085")
+            for label in labels
+        )
+
+        dialog.start_reading.showPopup()
+        qt_app.processEvents()
+        popup = dialog.start_reading.view()
+        popup_window = popup.window()
+        assert popup_window.objectName() == "ComboPopup"
+        assert popup_window.palette().color(QPalette.ColorRole.Window) == QColor(
+            "#ffffff"
+        )
+        assert popup_window.palette().color(QPalette.ColorRole.Text) == QColor(
+            "#101828"
+        )
+        dialog.start_reading.hidePopup()
+
+        screenshot = QPixmap(dialog.size())
+        screenshot.fill(QColor("#f8fafc"))
+        dialog.render(screenshot)
+        assert screenshot.save(str(tmp_path / "calculation-dialog-dark.png"))
+        dialog.close()
+    finally:
+        qt_app.setPalette(original)
+        qt_app.setStyleSheet(load_stylesheet())

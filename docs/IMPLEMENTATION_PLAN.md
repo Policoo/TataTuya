@@ -240,9 +240,11 @@ Acceptance:
 - [ ] Run the full unit, integration, and UI suite.
 - [ ] Run a fresh-database end-to-end workflow with representative Tuya fixtures.
 - [ ] Test Romanian formatting for RON and EUR.
-- [ ] Inspect final rendered main, Settings, Calculate, History, and Error screens.
+- [ ] Inspect final rendered main, Settings, Calculate, History, and Error screens
+  under both light and dark system palettes.
 - [ ] Rehearse upgrade behavior from the preceding schema version.
 - [ ] Review README installation and troubleshooting instructions.
+- [ ] Confirm developer-facing documentation, metadata, CI, and scripts use English.
 - [ ] Install the draft DMG on a clean Apple Silicon Mac, complete a connection
   test, and only then promote the draft GitHub Release.
 

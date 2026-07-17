@@ -68,7 +68,7 @@ class SettingsService:
         message: str,
         error: Exception,
     ) -> UserFacingError:
-        details = str(error).replace(settings.client_secret, "[REDACTAT]")
+        details = str(error).replace(settings.client_secret, "[REDACTED]")
         return UserFacingError("Conexiunea Tuya nu a reușit", message, details)
 
     def validate(self, settings: TuyaSettings) -> TuyaSettings:

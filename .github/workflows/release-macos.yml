@@ -1,4 +1,4 @@
-name: Pregătire release macOS ARM64
+name: Prepare macOS ARM64 release
 
 on:
   push:
@@ -14,32 +14,32 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Descarcă sursele
+      - name: Check out sources
         uses: actions/checkout@v6
 
-      - name: Configurează Python
+      - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: Instalează dependențele
+      - name: Install dependencies
         run: |
           python -m venv .venv
           echo "${PWD}/.venv/bin" >> "${GITHUB_PATH}"
           .venv/bin/python -m pip install ".[dev,package]"
 
-      - name: Verifică versiunea etichetei
+      - name: Verify tag version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           PACKAGE_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           if [[ "${RELEASE_TAG}" != "v${PACKAGE_VERSION}" ]]; then
-            echo "Eticheta ${RELEASE_TAG} nu corespunde versiunii ${PACKAGE_VERSION}." >&2
+            echo "Tag ${RELEASE_TAG} does not match package version ${PACKAGE_VERSION}." >&2
             exit 1
           fi
 
-      - name: Rulează verificările
+      - name: Run checks
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
@@ -47,27 +47,27 @@ jobs:
           python -m pyright --pythonversion 3.12
           python -m pytest
 
-      - name: Construiește aplicația ARM64
+      - name: Build ARM64 application
         run: ./scripts/build_macos.sh
 
-      - name: Creează imaginea DMG
+      - name: Create DMG image
         run: ./scripts/create_dmg.sh "${GITHUB_REF_NAME}"
 
-      - name: Păstrează artefactul workflow-ului
+      - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
           name: TataTuya-${{ github.ref_name }}-arm64
           path: dist/TataTuya-*-arm64.dmg
           if-no-files-found: error
 
-      - name: Atașează la draftul GitHub Release
+      - name: Attach to draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             RELEASE_IS_DRAFT="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')"
             if [[ "${RELEASE_IS_DRAFT}" != "true" ]]; then
-              echo "Release-ul ${GITHUB_REF_NAME} este deja public; artefactul nu va fi înlocuit automat." >&2
+              echo "Release ${GITHUB_REF_NAME} is already public; the artifact will not be replaced automatically." >&2
               exit 1
             fi
           else

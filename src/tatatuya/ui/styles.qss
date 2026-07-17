@@ -137,6 +137,36 @@ QDialog {
     background: #f8fafc;
 }
 
+QTabWidget::pane {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 0 6px 6px 6px;
+}
+
+QTabBar {
+    color: #344054;
+}
+
+QTabBar::tab {
+    background: #eef3f8;
+    color: #344054;
+    border: 1px solid #cbd5e1;
+    border-bottom: 0;
+    border-radius: 5px 5px 0 0;
+    padding: 7px 14px;
+    margin-right: 2px;
+}
+
+QTabBar::tab:hover {
+    background: #e3ebf4;
+    color: #182230;
+}
+
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #101828;
+}
+
 QLabel#ModalTitle {
     color: #101828;
     font-size: 22px;
@@ -147,6 +177,74 @@ QLabel#ModalSubtitle,
 QLabel#ModalMessage {
     color: #667085;
     font-size: 13px;
+}
+
+QDialog#ErrorDialog {
+    background: #f8fafc;
+}
+
+QFrame#ErrorSummary {
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    border-radius: 10px;
+}
+
+QLabel#ErrorSymbol {
+    background: #b42318;
+    color: #ffffff;
+    border-radius: 14px;
+    padding: 3px 10px;
+    font-size: 18px;
+    font-weight: 800;
+}
+
+QLabel#ErrorTitle {
+    color: #7f1d1d;
+    font-size: 18px;
+    font-weight: 750;
+}
+
+QLabel#ErrorMessage {
+    color: #475467;
+    font-size: 13px;
+}
+
+QPushButton#ErrorDetailsToggle {
+    background: transparent;
+    color: #1f6feb;
+    border: 0;
+    padding: 4px 0;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+QPushButton#ErrorDetailsToggle:hover {
+    color: #1b5fc9;
+    text-decoration: underline;
+}
+
+QFrame#ErrorDetailsPanel {
+    background: #ffffff;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+}
+
+QLabel#ErrorDetailsTitle {
+    color: #344054;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+QPlainTextEdit#ErrorTechnicalDetails {
+    background: #f8fafc;
+    color: #182230;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 12px;
+    selection-background-color: #dbeafe;
+    selection-color: #101828;
 }
 
 QLabel#FieldLabel {

@@ -380,6 +380,9 @@ are logged locally and wrapped in a generic Romanian message.
 
 ## 10. UI architecture
 
+- Romanian is confined to application-visible text and expected user-facing
+  errors. Source identifiers and all developer-facing repository material use
+  English.
 - Dialogs receive services or presentation-ready models, not global clients.
 - Table widgets do not call Tuya or SQLite directly.
 - User-facing strings are centralized in `ui/text.py` or an equivalent resource

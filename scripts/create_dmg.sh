@@ -7,30 +7,30 @@ VERSION="${1:-}"
 APP_PATH="${2:-${PROJECT_ROOT}/dist/TataTuya.app}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Eroare: imaginea DMG poate fi creată numai pe macOS." >&2
+  echo "Error: the DMG image can only be created on macOS." >&2
   exit 1
 fi
 
 if [[ -z "${VERSION}" ]]; then
-  echo "Utilizare: $0 <versiune> [cale-către-TataTuya.app]" >&2
+  echo "Usage: $0 <version> [path-to-TataTuya.app]" >&2
   exit 1
 fi
 
 VERSION="${VERSION#v}"
 if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-  echo "Eroare: versiunea trebuie să fie o versiune semantică, de exemplu 0.1.0." >&2
+  echo "Error: the version must use semantic versioning, for example 0.1.0." >&2
   exit 1
 fi
 
 if [[ ! -d "${APP_PATH}" ]]; then
-  echo "Eroare: aplicația nu există la ${APP_PATH}." >&2
+  echo "Error: the application does not exist at ${APP_PATH}." >&2
   exit 1
 fi
 
 DIST_DIRECTORY="${PROJECT_ROOT}/dist"
 DMG_PATH="${DIST_DIRECTORY}/TataTuya-${VERSION}-arm64.dmg"
 if [[ -e "${DMG_PATH}" ]]; then
-  echo "Eroare: fișierul există deja: ${DMG_PATH}" >&2
+  echo "Error: the file already exists: ${DMG_PATH}" >&2
   exit 1
 fi
 
@@ -50,4 +50,4 @@ hdiutil create \
   -format UDZO \
   "${DMG_PATH}"
 
-echo "Imagine creată: ${DMG_PATH}"
+echo "Image created: ${DMG_PATH}"

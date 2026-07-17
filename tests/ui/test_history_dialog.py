@@ -4,6 +4,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from tatatuya.domain.models import Calculation, Currency, Device, Reading
@@ -157,3 +158,52 @@ def test_history_dialog_has_clear_empty_states() -> None:
     assert dialog.calculations_empty.isVisible()
     assert not dialog.calculation_detail.isVisible()
     dialog.close()
+
+
+def test_dark_palette_history_tabs_remain_readable(tmp_path) -> None:
+    qt_app = app()
+    original = qt_app.palette()
+    dark = QPalette(original)
+    dark.setColor(QPalette.ColorRole.Window, QColor("#202124"))
+    dark.setColor(QPalette.ColorRole.WindowText, QColor("#f8fafc"))
+    dark.setColor(QPalette.ColorRole.Base, QColor("#101114"))
+    dark.setColor(QPalette.ColorRole.Text, QColor("#f8fafc"))
+    qt_app.setPalette(dark)
+    qt_app.setStyleSheet(load_stylesheet())
+    try:
+        dialog = HistoryDialog(
+            Device("meter-1", "Contor principal — locuința familiei"),
+            populated_context(),
+        )
+        dialog.show()
+        qt_app.processEvents()
+
+        tab_bar = dialog.tabs.tabBar()
+        assert tab_bar.palette().color(QPalette.ColorRole.WindowText) == QColor(
+            "#344054"
+        )
+        assert all(not tab_bar.tabRect(index).isEmpty() for index in range(2))
+
+        dialog.tabs.setCurrentIndex(1)
+        qt_app.processEvents()
+        assert dialog.tabs.currentIndex() == 1
+        assert dialog.calculations_table.isVisible()
+        dialog.close()
+
+        calculations_dialog = HistoryDialog(
+            Device("meter-1", "Contor principal — locuința familiei"),
+            populated_context(),
+        )
+        calculations_dialog.tabs.setCurrentIndex(1)
+        calculations_dialog.show()
+        qt_app.processEvents()
+        assert calculations_dialog.tabs.currentIndex() == 1
+        assert calculations_dialog.calculations_table.isVisible()
+        screenshot = QPixmap(calculations_dialog.size())
+        screenshot.fill(QColor("#f8fafc"))
+        calculations_dialog.render(screenshot)
+        assert screenshot.save(str(tmp_path / "history-calculations-dark.png"))
+        calculations_dialog.close()
+    finally:
+        qt_app.setPalette(original)
+        qt_app.setStyleSheet(load_stylesheet())

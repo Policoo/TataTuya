@@ -37,6 +37,10 @@ the intended behavior and update the relevant document with the code.
 
 ## Engineering rules
 
+- Use Romanian only for user-facing application text and expected user-facing
+  errors. Use English for source identifiers, comments, docstrings,
+  documentation, package metadata, developer tooling, CI, scripts, logs, and
+  technical diagnostic markers.
 - Keep Qt widgets thin. Business calculations belong in `domain`, workflows in
   `services`, and persistence/API details in `infrastructure`.
 - Network and database work that can block must not freeze the Qt UI thread.

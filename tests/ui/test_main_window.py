@@ -11,6 +11,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
 from tatatuya.domain.errors import UserFacingError
@@ -119,6 +120,42 @@ def test_action_text_is_visible_and_rows_fit_styled_buttons(tmp_path) -> None:
     assert screenshot.width() == window.width()
     assert screenshot.height() == window.height()
     assert screenshot_path.stat().st_size > 10_000
+    window.close()
+
+
+def test_online_and_offline_states_use_semantic_colors(tmp_path) -> None:
+    qt_app = app()
+    online = representative_row()
+    offline = DeviceTableRow(
+        replace(
+            online.device,
+            device_id="meter-2",
+            name="Contor garaj",
+            online=False,
+        ),
+        replace(online.latest_reading, device_id="meter-2")
+        if online.latest_reading is not None
+        else None,
+    )
+    window = MainWindow(
+        cached_rows=[online, offline],
+        settings_configured=True,
+    )
+    window.show()
+    qt_app.processEvents()
+
+    online_item = window.table.item(0, 1)
+    offline_item = window.table.item(1, 1)
+    assert online_item is not None and online_item.text() == text.ONLINE
+    assert offline_item is not None and offline_item.text() == text.OFFLINE
+    assert online_item.foreground().color() == QColor("#157347")
+    assert offline_item.foreground().color() == QColor("#b42318")
+    assert online_item.font().bold()
+    assert offline_item.font().bold()
+    screenshot = QPixmap(window.size())
+    screenshot.fill(QColor("#f3f6fa"))
+    window.render(screenshot)
+    assert screenshot.save(str(tmp_path / "main-window-status-colors.png"))
     window.close()
 
 

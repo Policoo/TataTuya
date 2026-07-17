@@ -63,6 +63,7 @@ CLOSE = "Închide"
 SHOW_TECHNICAL_DETAILS = "Arată detaliile tehnice"
 HIDE_TECHNICAL_DETAILS = "Ascunde detaliile tehnice"
 COPY_TECHNICAL_DETAILS = "Copiază detaliile"
+TECHNICAL_DETAILS = "Detalii tehnice"
 
 CALCULATION_TITLE = "Calcul consum"
 CALCULATION_SUBTITLE = "Alegeți două citiri salvate pentru acest contor."

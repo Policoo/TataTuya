@@ -116,7 +116,7 @@ def test_connection_failure_is_safe_and_does_not_persist() -> None:
     except UserFacingError as error:
         assert error.title == "Conexiunea Tuya nu a reușit"
         assert "secret" not in (error.technical_details or "")
-        assert "[REDACTAT]" in (error.technical_details or "")
+        assert "[REDACTED]" in (error.technical_details or "")
     else:
         raise AssertionError("Expected a user-facing connection error")
     assert store.settings is None

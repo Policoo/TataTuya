@@ -8,6 +8,14 @@ import tomllib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEVELOPER_FACING_TEXT_FILES = (
+    "README.md",
+    "pyproject.toml",
+    ".github/workflows/release-macos.yml",
+    "scripts/build_macos.sh",
+    "scripts/create_dmg.sh",
+)
+ROMANIAN_SPECIFIC_CHARACTERS = frozenset("ăâîșțĂÂÎȘȚ")
 
 
 def test_pyinstaller_spec_declares_arm64_resources_and_migrations() -> None:
@@ -80,3 +88,10 @@ def test_packaging_dependencies_are_declared() -> None:
     optional = metadata["project"]["optional-dependencies"]
     assert any(item.startswith("pyinstaller") for item in optional["package"])
     assert any(item.startswith("pyright") for item in optional["dev"])
+
+
+def test_developer_facing_release_text_has_no_romanian_diacritics() -> None:
+    for relative_path in DEVELOPER_FACING_TEXT_FILES:
+        content = (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+        unexpected = sorted(ROMANIAN_SPECIFIC_CHARACTERS.intersection(content))
+        assert not unexpected, f"{relative_path} contains Romanian text: {unexpected}"

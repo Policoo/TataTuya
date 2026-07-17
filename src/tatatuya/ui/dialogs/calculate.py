@@ -7,7 +7,6 @@ from collections.abc import Callable
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QComboBox,
     QApplication,
     QDialog,
     QFormLayout,
@@ -24,6 +23,7 @@ from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Calculation, Device, Reading
 from tatatuya.services.billing_service import BillingService, CalculationContext
 from tatatuya.ui import text
+from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.formatters import (
     format_decimal,
     format_energy,
@@ -86,16 +86,16 @@ class CalculationDialog(QDialog):
         form.setContentsMargins(18, 18, 18, 18)
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(12)
-        self.start_reading = QComboBox()
+        self.start_reading = PaletteSafeComboBox()
         self.start_reading.setObjectName("StartReading")
-        self.end_reading = QComboBox()
+        self.end_reading = PaletteSafeComboBox()
         self.end_reading.setObjectName("EndReading")
         self.price = QLineEdit()
         self.price.setObjectName("UnitPrice")
         self.price.setPlaceholderText(text.PRICE_EXAMPLE)
-        form.addRow(text.START_READING, self.start_reading)
-        form.addRow(text.END_READING, self.end_reading)
-        form.addRow(text.PRICE_PER_KWH, self.price)
+        form.addRow(self._field_label(text.START_READING), self.start_reading)
+        form.addRow(self._field_label(text.END_READING), self.end_reading)
+        form.addRow(self._field_label(text.PRICE_PER_KWH), self.price)
         layout.addWidget(selection_panel)
 
         result_panel = QFrame()
@@ -109,11 +109,11 @@ class CalculationDialog(QDialog):
         self.consumption_value = self._result_label()
         self.currency_value = self._result_label()
         self.total_value = self._result_label("CalculationTotal")
-        result.addRow(text.START_VALUE, self.start_value)
-        result.addRow(text.END_VALUE, self.end_value)
-        result.addRow(text.CONSUMPTION, self.consumption_value)
-        result.addRow(text.CURRENCY, self.currency_value)
-        result.addRow(text.TOTAL, self.total_value)
+        result.addRow(self._field_label(text.START_VALUE), self.start_value)
+        result.addRow(self._field_label(text.END_VALUE), self.end_value)
+        result.addRow(self._field_label(text.CONSUMPTION), self.consumption_value)
+        result.addRow(self._field_label(text.CURRENCY), self.currency_value)
+        result.addRow(self._field_label(text.TOTAL), self.total_value)
         layout.addWidget(result_panel)
 
         self.feedback = QLabel()
@@ -143,6 +143,12 @@ class CalculationDialog(QDialog):
         label.setObjectName(name)
         return label
 
+    @staticmethod
+    def _field_label(label_text: str) -> QLabel:
+        label = QLabel(label_text)
+        label.setObjectName("FieldLabel")
+        return label
+
     def _populate_readings(self) -> None:
         for reading in self.context.readings:
             if reading.id is None:
@@ -165,7 +171,7 @@ class CalculationDialog(QDialog):
                 )
             )
 
-    def _selected(self, combo: QComboBox) -> Reading | None:
+    def _selected(self, combo: PaletteSafeComboBox) -> Reading | None:
         return self._readings.get(combo.currentData())
 
     def _update_preview(self, *_args: object) -> None:

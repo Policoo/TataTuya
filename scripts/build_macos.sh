@@ -9,12 +9,12 @@ DIST_DIRECTORY="${PROJECT_ROOT}/dist"
 APP_EXECUTABLE="${DIST_DIRECTORY}/TataTuya.app/Contents/MacOS/TataTuya"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  echo "Eroare: aplicația macOS poate fi construită numai pe macOS." >&2
+  echo "Error: the macOS application can only be built on macOS." >&2
   exit 1
 fi
 
 if [[ "$(uname -m)" != "arm64" ]]; then
-  echo "Eroare: build-ul de distribuție necesită un Mac Apple Silicon (arm64)." >&2
+  echo "Error: the distribution build requires an Apple Silicon Mac (arm64)." >&2
   exit 1
 fi
 
@@ -26,12 +26,12 @@ python -m PyInstaller \
   "${SPEC_FILE}"
 
 if [[ ! -x "${APP_EXECUTABLE}" ]]; then
-  echo "Eroare: PyInstaller nu a creat executabilul așteptat." >&2
+  echo "Error: PyInstaller did not create the expected executable." >&2
   exit 1
 fi
 
 if [[ "$(lipo -archs "${APP_EXECUTABLE}")" != "arm64" ]]; then
-  echo "Eroare: executabilul rezultat nu este exclusiv arm64." >&2
+  echo "Error: the resulting executable is not arm64-only." >&2
   exit 1
 fi
 
@@ -46,8 +46,8 @@ TATATUYA_DATA_DIR="${SMOKE_DATA_DIRECTORY}" \
   "${APP_EXECUTABLE}" --smoke-test
 
 if [[ ! -f "${SMOKE_DATA_DIRECTORY}/tatatuya.sqlite3" ]]; then
-  echo "Eroare: aplicația împachetată nu a inițializat baza de date." >&2
+  echo "Error: the packaged application did not initialize its database." >&2
   exit 1
 fi
 
-echo "Aplicație creată: ${DIST_DIRECTORY}/TataTuya.app"
+echo "Application created: ${DIST_DIRECTORY}/TataTuya.app"

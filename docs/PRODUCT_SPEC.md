@@ -95,6 +95,9 @@ Row actions:
 Buttons and rows must size from their styled text and layout. The UI must not
 depend on fixed control heights.
 
+`Online` is displayed in green and `Offline` in red. Unknown or unavailable
+states use a neutral or warning treatment rather than implying connectivity.
+
 Only devices with a supported cumulative-energy specification are presented as
 new meters. Other Tuya products are not shown in the billing table. A meter with
 saved readings remains visible if it later disappears from Tuya or becomes
@@ -281,10 +284,15 @@ Expected failures use a shared custom user-facing exception containing:
 - Optional technical details
 
 The shared error dialog provides a close action and, when details exist, an
-expand/copy mechanism. Unexpected errors are logged and converted to a generic
-Romanian error instead of terminating the application.
+expand/copy mechanism. Its user-facing summary is visually primary; technical
+details remain collapsed and visually secondary. Unexpected errors are logged
+and converted to a generic Romanian error instead of terminating the application.
 
 ## 12. Romanian formatting and terminology
+
+The Romanian-language requirement applies to application-visible text and
+expected user-facing errors. Repository documentation, source identifiers,
+developer tooling, CI output, scripts, logs, and package metadata use English.
 
 - Decimal separator: comma
 - Thousands separator: period or locale-appropriate grouping

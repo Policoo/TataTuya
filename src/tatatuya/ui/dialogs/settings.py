@@ -6,9 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QCloseEvent, QPalette
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QFormLayout,
     QFrame,
@@ -24,6 +23,7 @@ from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Currency, TuyaSettings
 from tatatuya.services.settings_service import ConnectionTestResult, SettingsService
 from tatatuya.ui import text
+from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.workers import WorkflowThread
 
 
@@ -41,35 +41,6 @@ REGION_LABELS = {
 class SavedSettings:
     settings: TuyaSettings
     connection_verified: bool
-
-
-class SettingsComboBox(QComboBox):
-    """Combo whose native popup remains readable under a dark system palette."""
-
-    def showPopup(self) -> None:  # noqa: N802 - Qt override
-        super().showPopup()
-        popup = self.view().window()
-        popup.setObjectName("ComboPopup")
-        view_palette = self.view().palette()
-        palette = popup.palette()
-        palette.setColor(
-            QPalette.ColorRole.Window,
-            view_palette.color(QPalette.ColorRole.Base),
-        )
-        palette.setColor(
-            QPalette.ColorRole.Base,
-            view_palette.color(QPalette.ColorRole.Base),
-        )
-        palette.setColor(
-            QPalette.ColorRole.WindowText,
-            view_palette.color(QPalette.ColorRole.Text),
-        )
-        palette.setColor(
-            QPalette.ColorRole.Text,
-            view_palette.color(QPalette.ColorRole.Text),
-        )
-        popup.setPalette(palette)
-        popup.setAutoFillBackground(True)
 
 
 class SettingsDialog(QDialog):
@@ -127,11 +98,11 @@ class SettingsDialog(QDialog):
         self.client_secret = QLineEdit()
         self.client_secret.setObjectName("ClientSecretField")
         self.client_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.region = SettingsComboBox()
+        self.region = PaletteSafeComboBox()
         self.region.setObjectName("RegionField")
         for code, label in self.regions.items():
             self.region.addItem(label, code)
-        self.currency = SettingsComboBox()
+        self.currency = PaletteSafeComboBox()
         self.currency.setObjectName("CurrencyField")
         self.currency.addItem("Leu românesc (RON)", Currency.RON)
         self.currency.addItem("Euro (EUR)", Currency.EUR)

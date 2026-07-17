@@ -1,30 +1,29 @@
 # TataTuya
 
-TataTuya este o aplicație desktop în limba română pentru salvarea indexurilor
-cumulative ale contoarelor de energie Tuya și calcularea exactă a costului dintre
-două citiri. Aplicația citește date din Tuya, dar nu trimite comenzi și nu
-modifică dispozitivele.
+TataTuya is a Romanian-language desktop application that stores cumulative
+readings from Tuya energy meters and calculates the exact cost between two
+readings. It reads data from Tuya but never sends commands or modifies devices.
 
-## Instalare pe Apple Silicon
+## Installation on Apple Silicon
 
-1. Descarcă fișierul `TataTuya-<versiune>-arm64.dmg` din pagina GitHub Releases.
-2. Deschide imaginea DMG și trage `TataTuya.app` peste scurtătura `Applications`.
-3. Ejectează imaginea DMG, apoi deschide TataTuya din dosarul Applications.
-4. Deschide `Setări`, completează Client ID, Client Secret și regiunea Tuya,
-   testează conexiunea și salvează.
+1. Download `TataTuya-<version>-arm64.dmg` from GitHub Releases.
+2. Open the DMG and drag `TataTuya.app` onto the `Applications` shortcut.
+3. Eject the DMG, then open TataTuya from the Applications folder.
+4. Open the application's settings, enter the Tuya Client ID, Client Secret,
+   and region, test the connection, and save.
 
-Versiunea inițială este distribuită fără semnătură Apple și fără notarizare. La
-prima pornire, macOS poate bloca deschiderea obișnuită. În Finder, deschide
-`Applications`, fă Control-click sau click dreapta pe TataTuya, alege `Open`,
-apoi confirmă din nou `Open`. Această excepție este necesară o singură dată.
+The initial release is distributed without Apple signing or notarization. On
+first launch, macOS may block the usual open action. In Finder, open
+`Applications`, Control-click or right-click TataTuya, choose `Open`, and then
+confirm `Open` again. This exception is required only once.
 
-Datele locale sunt salvate în
-`~/Library/Application Support/TataTuya/tatatuya.sqlite3`. Citirile și calculele
-nu sunt șterse la închiderea sau actualizarea aplicației.
+Local data is stored in
+`~/Library/Application Support/TataTuya/tatatuya.sqlite3`. Readings and
+calculations are not deleted when the application closes or is updated.
 
-## Dezvoltare
+## Development
 
-Este necesar Python 3.11 sau mai nou.
+Python 3.11 or newer is required.
 
 ```bash
 python3 -m venv .venv
@@ -34,31 +33,32 @@ python -m pytest
 python -m tatatuya
 ```
 
-Pentru a construi distribuția este necesar un Mac Apple Silicon:
+Building the distribution requires an Apple Silicon Mac:
 
 ```bash
 ./scripts/build_macos.sh
 ./scripts/create_dmg.sh 0.1.0
 ```
 
-Primul script creează `dist/TataTuya.app`, verifică arhitectura executabilului și
-rulează un test al resurselor și migrărilor incluse. Al doilea creează
-`dist/TataTuya-0.1.0-arm64.dmg`, cu aplicația și o scurtătură spre Applications.
+The first script creates `dist/TataTuya.app`, verifies the executable
+architecture, and runs a smoke test for bundled resources and migrations. The
+second creates `dist/TataTuya-0.1.0-arm64.dmg` with the application and an
+Applications shortcut.
 
-Pregătirea unui release este declanșată de o etichetă Git care corespunde exact
-versiunii din `pyproject.toml`, de exemplu `v0.1.0`. Workflow-ul ARM64 rulează
-verificările, construiește DMG-ul și îl atașează la un GitHub Release în stare
-draft. Release-ul rămâne nepublicat până când repetiția Phase 12 pe un Mac curat
-confirmă instalarea, inițializarea bazei de date, deschiderea Settings și testul
-de conexiune. Nu introduce credențiale reale în surse, fișiere de configurare
-sau artefacte de release.
+Release preparation is triggered by a Git tag that exactly matches the version
+in `pyproject.toml`, for example `v0.1.0`. The ARM64 workflow runs the checks,
+builds the DMG, and attaches it to a draft GitHub Release. The release remains
+unpublished until the Phase 12 rehearsal on a clean Mac confirms installation,
+database initialization, opening the settings screen, and connection testing.
+Never place real credentials in source files, configuration files, or release
+artifacts.
 
-## Depanare
+## Troubleshooting
 
-- Dacă macOS raportează că dezvoltatorul nu poate fi verificat, folosește pașii
-  Control-click → `Open` de mai sus; nu dezactiva Gatekeeper global.
-- Dacă lipsește configurația, intră în `Setări`; aplicația nu are wizard la
-  prima pornire.
-- Jurnalul local este în
-  `~/Library/Application Support/TataTuya/tatatuya.log` și nu include secretele
-  Tuya.
+- If macOS reports that the developer cannot be verified, use the
+  Control-click → `Open` steps above; do not disable Gatekeeper globally.
+- If configuration is missing, open the application's settings screen. There
+  is no first-run wizard.
+- The local log is stored at
+  `~/Library/Application Support/TataTuya/tatatuya.log` and does not include
+  Tuya secrets.

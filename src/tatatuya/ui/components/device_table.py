@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -79,6 +80,19 @@ class DeviceTable(QTableWidget):
                 else online_label(row.device.online)
             )
             state_item = QTableWidgetItem(state)
+            if row.device.present_in_tuya is False:
+                state_color = QColor("#8a5700")
+            elif row.device.online is True:
+                state_color = QColor("#157347")
+            elif row.device.online is False:
+                state_color = QColor("#b42318")
+            else:
+                state_color = QColor("#667085")
+            state_item.setForeground(QBrush(state_color))
+            if row.device.online is not None:
+                state_font = state_item.font()
+                state_font.setWeight(QFont.Weight.DemiBold)
+                state_item.setFont(state_font)
             if row.error_message:
                 state_item.setToolTip(row.error_message)
             self.setItem(row_index, 1, state_item)
