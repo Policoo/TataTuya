@@ -94,3 +94,19 @@ def test_invalid_price_without_fallback(text) -> None:
 
 def test_remembered_price_fallback() -> None:
     assert resolve_unit_price("", Decimal("0.75")) == Decimal("0.75")
+
+
+@pytest.mark.parametrize("remembered", [Decimal("NaN"), Decimal("Infinity")])
+def test_rejects_non_finite_remembered_price(remembered) -> None:
+    with pytest.raises(UserFacingError, match="pozitiv"):
+        resolve_unit_price("", remembered)
+
+
+def test_rejects_unsupported_reading_unit() -> None:
+    start = reading(1, "100")
+    unsupported = Reading(
+        "meter-1", NOW + timedelta(days=1), "101", 0, "MWh",
+        Decimal("101"), "batch", "{}", 2,
+    )
+    with pytest.raises(UserFacingError, match="unitate neacceptată"):
+        calculate_period(start, unsupported, Decimal("1"), Currency.RON, NOW)

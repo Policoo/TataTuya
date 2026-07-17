@@ -8,16 +8,25 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from tatatuya.domain.errors import UserFacingError
+from tatatuya.domain.models import Calculation, Currency
 from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.repositories.calculations import (
+    CalculationRepository,
+    DevicePreferenceRepository,
+)
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import SettingsRepository
 from tatatuya.infrastructure.tuya.client import TuyaClient
+from tatatuya.services.billing_service import BillingService, CalculationContext
 from tatatuya.services.device_service import DeviceService
 from tatatuya.services.reading_service import ReadingService
 from tatatuya.services.settings_service import SettingsService
+from tatatuya.ui import text
 from tatatuya.ui.components.device_table import DeviceTableRow
 from tatatuya.ui.components.modal import AppModal
+from tatatuya.ui.dialogs.calculate import CalculationDialog
 from tatatuya.ui.dialogs.settings import REGION_LABELS, SavedSettings, SettingsDialog
 from tatatuya.ui.main_window import InitialState, MainWindow
 
@@ -50,6 +59,44 @@ def _refresh_workflow(database: Database, settings):
         reading_store = ReadingRepository(connection)
         device_service = DeviceService(gateway, devices)
         return ReadingService(gateway, device_service, reading_store).refresh()
+
+
+def _prepare_calculation(database: Database, device_id: str) -> CalculationContext:
+    database.initialize()
+    with database.connect() as connection:
+        settings = SettingsRepository(connection).load_tuya()
+        if settings is None:
+            raise UserFacingError(
+                "Setări incomplete",
+                "Configurați moneda aplicației înainte de calcul.",
+            )
+        return BillingService(
+            ReadingRepository(connection),
+            CalculationRepository(connection),
+            DevicePreferenceRepository(connection),
+        ).prepare(device_id, settings.currency)
+
+
+def _save_calculation(
+    database: Database,
+    device_id: str,
+    start_reading_id: int,
+    end_reading_id: int,
+    entered_price: str,
+    currency: Currency,
+) -> Calculation:
+    with database.connect() as connection:
+        return BillingService(
+            ReadingRepository(connection),
+            CalculationRepository(connection),
+            DevicePreferenceRepository(connection),
+        ).save_calculation(
+            device_id,
+            start_reading_id,
+            end_reading_id,
+            entered_price,
+            currency,
+        )
 
 
 def create_main_window(database: Database | None = None) -> MainWindow:
@@ -91,7 +138,34 @@ def create_main_window(database: Database | None = None) -> MainWindow:
                 refresh_when_verified=True,
             )
 
+    def show_calculation(device) -> None:
+        def open_dialog(payload: object) -> None:
+            if not isinstance(payload, CalculationContext):
+                return
+            dialog = CalculationDialog(
+                device,
+                payload,
+                lambda start_id, end_id, entered: _save_calculation(
+                    database,
+                    device.device_id,
+                    start_id,
+                    end_id,
+                    entered,
+                    payload.currency,
+                ),
+                window,
+            )
+            dialog.error_raised.connect(lambda error: show_error(error, dialog))
+            dialog.exec()
+
+        window.run_background_operation(
+            lambda: _prepare_calculation(database, device.device_id),
+            open_dialog,
+            text.PREPARING_CALCULATION,
+        )
+
     window.settings_requested.connect(show_settings)
+    window.calculation_requested.connect(show_calculation)
     window.error_raised.connect(show_error)
     QTimer.singleShot(0, window.load_initial_state)
     return window

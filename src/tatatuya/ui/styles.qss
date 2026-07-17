@@ -239,3 +239,31 @@ QLabel#SettingsFeedback[state="success"] {
 QLabel#SettingsFeedback[state="error"] {
     color: #b42318;
 }
+
+QLabel#CalculationMeter {
+    color: #101828;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+QFrame#CalculationResult {
+    background: #eef5ff;
+    border: 1px solid #bfd3f8;
+    border-radius: 8px;
+}
+
+QLabel#CalculationValue {
+    color: #344054;
+    font-size: 13px;
+}
+
+QLabel#CalculationTotal {
+    color: #101828;
+    font-size: 18px;
+    font-weight: 750;
+}
+
+QLabel#CalculationFeedback {
+    color: #667085;
+    font-size: 12px;
+}

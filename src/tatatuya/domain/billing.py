@@ -36,6 +36,24 @@ def calculate_period(
     currency: Currency,
     created_at_utc: datetime,
 ) -> Calculation:
+    consumption = calculate_consumption(start, end)
+    if not unit_price.is_finite() or unit_price <= 0:
+        raise _invalid_price()
+
+    return Calculation(
+        device_id=start.device_id,
+        start_reading_id=start.id,
+        end_reading_id=end.id,
+        consumption_kwh=consumption,
+        unit_price=unit_price,
+        currency=currency,
+        total=consumption * unit_price,
+        created_at_utc=created_at_utc,
+    )
+
+
+def calculate_consumption(start: Reading, end: Reading) -> Decimal:
+    """Validate a reading period and return its exact kWh consumption."""
     if start.id is None or end.id is None:
         raise ValueError("Billing requires persisted readings")
     if start.device_id != end.device_id:
@@ -58,9 +76,6 @@ def calculate_period(
             "Unități incompatibile",
             "Una dintre citirile selectate folosește o unitate neacceptată.",
         )
-    if not unit_price.is_finite() or unit_price <= 0:
-        raise _invalid_price()
-
     consumption = end.value_kwh - start.value_kwh
     if consumption < 0:
         raise UserFacingError(
@@ -68,16 +83,7 @@ def calculate_period(
             "Indexul final este mai mic decât cel inițial. Contorul poate fi resetat sau înlocuit.",
         )
 
-    return Calculation(
-        device_id=start.device_id,
-        start_reading_id=start.id,
-        end_reading_id=end.id,
-        consumption_kwh=consumption,
-        unit_price=unit_price,
-        currency=currency,
-        total=consumption * unit_price,
-        created_at_utc=created_at_utc,
-    )
+    return consumption
 
 
 def resolve_unit_price(entered_text: str, remembered: Decimal | None) -> Decimal:
@@ -90,7 +96,7 @@ def resolve_unit_price(entered_text: str, remembered: Decimal | None) -> Decimal
             "Preț lipsă",
             "Introduceți prețul pentru un kWh.",
         )
-    if price <= 0:
+    if not price.is_finite() or price <= 0:
         raise _invalid_price()
     return price
 

@@ -36,6 +36,7 @@ class InitialState:
 
 class MainWindow(QMainWindow):
     settings_requested = Signal()
+    calculation_requested = Signal(object)
     error_raised = Signal(object)
 
     def __init__(
@@ -105,6 +106,7 @@ class MainWindow(QMainWindow):
 
         self.content = QStackedWidget()
         self.table = DeviceTable()
+        self.table.calculate_requested.connect(self.calculation_requested)
         self.content.addWidget(self.table)
         self.loading_state = self._state_panel(
             text.LOADING_LOCAL_TITLE,
@@ -238,6 +240,28 @@ class MainWindow(QMainWindow):
         )
         if connection_verified and refresh_when_verified:
             self._schedule_refresh()
+
+    def run_background_operation(
+        self,
+        call: Callable[[], object],
+        success_handler: Callable[[object], None],
+        working_status: str,
+    ) -> None:
+        """Run a non-refresh workflow without blocking the Qt event loop."""
+        if self.active_threads:
+            return
+        self.refresh_button.setEnabled(False)
+        self.status_label.setText(working_status)
+
+        def succeeded(payload: object) -> None:
+            self.status_label.setText(text.READY)
+            QTimer.singleShot(0, lambda: success_handler(payload))
+
+        def failed(error: UserFacingError) -> None:
+            self.status_label.setText(text.READY)
+            self.error_raised.emit(error)
+
+        self._run_worker(call, succeeded, failed)
 
     def _schedule_refresh(self) -> None:
         if self.active_threads:

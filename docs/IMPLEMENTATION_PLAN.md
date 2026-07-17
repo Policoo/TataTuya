@@ -128,14 +128,14 @@ Acceptance:
 
 ## Phase 8: Calculation workflow
 
-- [ ] Build timestamped start/end reading selectors.
-- [ ] Default to newest ending reading and the last calculation's ending reading
+- [x] Build timestamped start/end reading selectors.
+- [x] Default to newest ending reading and the last calculation's ending reading
   as the next start, falling back to the earliest reading.
-- [ ] Show the per-meter prior price as faded fallback text.
-- [ ] Automatically use that price when the input remains empty.
-- [ ] Show consumption and a two-decimal total using Romanian formatting.
-- [ ] Persist the immutable calculation and updated meter preference atomically.
-- [ ] Add domain, integration, and UI tests for all validation paths.
+- [x] Show the per-meter prior price as faded fallback text.
+- [x] Automatically use that price when the input remains empty.
+- [x] Show consumption and a two-decimal total using Romanian formatting.
+- [x] Persist the immutable calculation and updated meter preference atomically.
+- [x] Add domain, integration, and UI tests for all validation paths.
 
 Acceptance:
 

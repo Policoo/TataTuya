@@ -38,6 +38,10 @@ def format_local_datetime(value: datetime) -> str:
     return local.strftime("%d.%m.%Y, %H:%M")
 
 
+def format_reading_option(value: Decimal, recorded_at_utc: datetime) -> str:
+    return f"{format_local_datetime(recorded_at_utc)} — {format_energy(value)}"
+
+
 def online_label(value: bool | None) -> str:
     if value is True:
         return text.ONLINE

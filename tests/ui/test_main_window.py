@@ -106,6 +106,65 @@ def test_action_text_is_visible_and_rows_fit_styled_buttons(tmp_path) -> None:
     window.close()
 
 
+def test_calculate_row_action_is_forwarded_with_its_device() -> None:
+    qt_app = app()
+    row = representative_row()
+    window = MainWindow(cached_rows=[row], settings_configured=True)
+    requested = []
+    window.calculation_requested.connect(requested.append)
+    window.show()
+    qt_app.processEvents()
+
+    action_widget = window.table.cellWidget(0, 4)
+    calculate = next(
+        button
+        for button in action_widget.findChildren(QPushButton)
+        if button.text() == text.CALCULATE
+    )
+    calculate.click()
+    qt_app.processEvents()
+
+    assert requested == [row.device]
+    window.close()
+
+
+def test_calculation_preparation_runs_off_gui_thread_and_restores_controls() -> None:
+    qt_app = app()
+    gui_thread = threading.get_ident()
+    worker_threads = []
+    payloads = []
+
+    def prepare():
+        worker_threads.append(threading.get_ident())
+        return "pregătit"
+
+    window = MainWindow(
+        cached_rows=[representative_row()], settings_configured=True
+    )
+    window.show()
+    window.run_background_operation(
+        prepare,
+        payloads.append,
+        text.PREPARING_CALCULATION,
+    )
+    assert not window.refresh_button.isEnabled()
+    assert window.status_label.text() == text.PREPARING_CALCULATION
+
+    deadline = time.monotonic() + 2
+    while (
+        window.active_threads or not payloads
+    ) and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+    qt_app.processEvents()
+
+    assert worker_threads and worker_threads[0] != gui_thread
+    assert payloads == ["pregătit"]
+    assert window.refresh_button.isEnabled()
+    assert window.status_label.text() == text.READY
+    window.close()
+
+
 def test_refresh_runs_async_preserves_rows_and_restores_button() -> None:
     qt_app = app()
 
