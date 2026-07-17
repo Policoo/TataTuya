@@ -1,0 +1,76 @@
+name: Pregătire release macOS ARM64
+
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Descarcă sursele
+        uses: actions/checkout@v6
+
+      - name: Configurează Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalează dependențele
+        run: |
+          python -m venv .venv
+          echo "${PWD}/.venv/bin" >> "${GITHUB_PATH}"
+          .venv/bin/python -m pip install ".[dev,package]"
+
+      - name: Verifică versiunea etichetei
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          PACKAGE_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [[ "${RELEASE_TAG}" != "v${PACKAGE_VERSION}" ]]; then
+            echo "Eticheta ${RELEASE_TAG} nu corespunde versiunii ${PACKAGE_VERSION}." >&2
+            exit 1
+          fi
+
+      - name: Rulează verificările
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m ruff check .
+          python -m pyright --pythonversion 3.12
+          python -m pytest
+
+      - name: Construiește aplicația ARM64
+        run: ./scripts/build_macos.sh
+
+      - name: Creează imaginea DMG
+        run: ./scripts/create_dmg.sh "${GITHUB_REF_NAME}"
+
+      - name: Păstrează artefactul workflow-ului
+        uses: actions/upload-artifact@v7
+        with:
+          name: TataTuya-${{ github.ref_name }}-arm64
+          path: dist/TataTuya-*-arm64.dmg
+          if-no-files-found: error
+
+      - name: Atașează la draftul GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            RELEASE_IS_DRAFT="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft')"
+            if [[ "${RELEASE_IS_DRAFT}" != "true" ]]; then
+              echo "Release-ul ${GITHUB_REF_NAME} este deja public; artefactul nu va fi înlocuit automat." >&2
+              exit 1
+            fi
+          else
+            gh release create "${GITHUB_REF_NAME}" --draft --verify-tag --generate-notes --title "TataTuya ${GITHUB_REF_NAME#v}"
+          fi
+          gh release upload "${GITHUB_REF_NAME}" dist/TataTuya-*-arm64.dmg --clobber

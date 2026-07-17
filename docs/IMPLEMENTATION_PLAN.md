@@ -216,12 +216,17 @@ Acceptance:
 
 ## Phase 11: macOS packaging
 
-- [ ] Add PyInstaller configuration for Apple Silicon.
-- [ ] Bundle QSS, icons, migrations, and Qt plugins.
-- [ ] Add `.app` build and `.dmg` creation scripts.
-- [ ] Add a GitHub Actions ARM64 macOS release workflow.
-- [ ] Attach versioned `.dmg` artifacts to GitHub Releases.
-- [ ] Document installation and Gatekeeper's Control-click `Open` workaround.
+- [x] Add PyInstaller configuration for Apple Silicon.
+- [x] Bundle QSS, icons, migrations, and Qt plugins.
+- [x] Add `.app` build and `.dmg` creation scripts.
+- [x] Add a GitHub Actions ARM64 macOS release workflow.
+- [x] Attach versioned `.dmg` artifacts to draft GitHub Releases without
+  automatically publishing them.
+- [x] Document installation and Gatekeeper's Control-click `Open` workaround.
+
+The packaging contract and Linux-verifiable checks are complete. The clean-Mac
+installation acceptance gate remains part of Phase 12 release rehearsal and
+must pass before manually promoting the draft to a production release.
 
 Acceptance:
 
@@ -238,6 +243,8 @@ Acceptance:
 - [ ] Inspect final rendered main, Settings, Calculate, History, and Error screens.
 - [ ] Rehearse upgrade behavior from the preceding schema version.
 - [ ] Review README installation and troubleshooting instructions.
+- [ ] Install the draft DMG on a clean Apple Silicon Mac, complete a connection
+  test, and only then promote the draft GitHub Release.
 
 Acceptance:
 

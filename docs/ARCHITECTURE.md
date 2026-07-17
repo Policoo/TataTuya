@@ -430,9 +430,11 @@ are logged locally and wrapped in a generic Romanian message.
 - Bundle styles, icons, and database migrations explicitly.
 - Create an unsigned `.dmg` containing the `.app` and Applications shortcut.
 - GitHub Actions runs tests, builds on an ARM64 macOS runner, and attaches the
-  `.dmg` to a GitHub Release.
+  `.dmg` to a draft GitHub Release. It must refuse to replace an already-public
+  release automatically.
 - Document the first-launch Control-click/right-click `Open` workaround required
   by Gatekeeper for an unnotarized application.
-- Perform a clean-machine/fresh-database rehearsal before calling a release ready.
+- Perform a clean-machine/fresh-database rehearsal before promoting the draft
+  to a public release or calling the release ready.
 
 No release may contain credentials embedded in source or build artifacts.
