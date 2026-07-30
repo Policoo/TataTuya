@@ -6,15 +6,18 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtGui import QColor, QPalette, QPixmap
+import pytest
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication, QLabel
 
+from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Currency, Device, Reading
 from tatatuya.services.billing_service import CalculationContext
 from tatatuya.ui import text
 from tatatuya.ui.app import load_stylesheet
-from tatatuya.ui.dialogs.calculate import CalculationDialog
+from tatatuya.ui.dialogs.calculate import CalculationDialog, CloudImportPayload
 from tatatuya.ui.formatters import format_local_datetime
+from tatatuya.ui.workers import WorkerOwner
 
 
 NOW = datetime(2026, 12, 3, 18, 42, tzinfo=UTC)
@@ -306,6 +309,225 @@ def test_no_remembered_price_requires_input_for_total() -> None:
     dialog.close()
 
 
+def test_dialog_opens_with_no_readings_and_cloud_import_rebuilds_selectors(
+    tmp_path,
+) -> None:
+    qt_app = app()
+    empty = CalculationContext(
+        "meter-1", (), None, None, Decimal("0.80"), Currency.RON, True
+    )
+    imported_context = context()
+
+    def import_cloud(cancellation):
+        cancellation.checkpoint()
+        return CloudImportPayload(imported_context, 2, 1)
+
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        empty,
+        Service(),
+        cloud_import_workflow=import_cloud,
+    )
+    dialog.show()
+    qt_app.processEvents()
+
+    assert dialog.feedback.text() == text.INSUFFICIENT_READINGS
+    assert not dialog.save_button.isEnabled()
+    assert dialog.cloud_import_button.isEnabled()
+    dialog.cloud_import_button.click()
+    wait_for_save(qt_app, dialog)
+
+    assert dialog.start_reading.count() == 3
+    assert dialog.end_reading.count() == 3
+    assert dialog.cloud_feedback.text() == text.CLOUD_IMPORT_RESULT.format(
+        new=2, existing=1
+    )
+    assert dialog.cloud_feedback.property("state") == "success"
+    assert dialog.save_button.isEnabled()
+    assert all(
+        widget.isVisible() and not widget.geometry().isEmpty()
+        for widget in (
+            dialog.cloud_panel,
+            dialog.cloud_title,
+            dialog.cloud_help,
+            dialog.cloud_import_button,
+            dialog.cloud_feedback,
+        )
+    )
+    assert dialog.start_date.width() >= dialog.start_date.sizeHint().width()
+    assert dialog.end_date.width() >= dialog.end_date.sizeHint().width()
+    assert (
+        dialog.cloud_import_button.width()
+        >= dialog.cloud_import_button.sizeHint().width()
+    )
+    assert (
+        dialog.cloud_title.palette().color(QPalette.ColorRole.WindowText)
+        == QColor("#1d2939")
+    )
+    assert (
+        dialog.cloud_help.palette().color(QPalette.ColorRole.WindowText)
+        == QColor("#475467")
+    )
+    assert (
+        dialog.cloud_feedback.palette().color(QPalette.ColorRole.WindowText)
+        == QColor("#067647")
+    )
+    assert dialog.grab().save(str(tmp_path / "calculation-cloud-card-light.png"))
+    dialog.close()
+
+
+def test_unverified_feature_has_honest_state_and_no_import_control(tmp_path) -> None:
+    qt_app = app()
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        context(),
+        Service(),
+        cloud_unavailable_text=text.CLOUD_IMPORT_NOT_AVAILABLE,
+    )
+    dialog.show()
+    qt_app.processEvents()
+
+    assert not dialog.cloud_import_button.isVisible()
+    assert not dialog.cloud_settings_button.isVisible()
+    assert dialog.cloud_feedback.text() == text.CLOUD_IMPORT_NOT_AVAILABLE
+    assert dialog.cloud_feedback.property("state") == "unavailable"
+    assert all(
+        widget.isVisible() and not widget.geometry().isEmpty()
+        for widget in (
+            dialog.cloud_panel,
+            dialog.cloud_title,
+            dialog.cloud_help,
+            dialog.cloud_feedback,
+        )
+    )
+    assert dialog.grab().save(str(tmp_path / "calculation-cloud-unavailable.png"))
+    dialog.close()
+
+
+def test_missing_credentials_offer_settings_action() -> None:
+    qt_app = app()
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        context(),
+        Service(),
+        cloud_settings_available=True,
+    )
+    requested = []
+    dialog.settings_requested.connect(lambda: requested.append(True))
+    dialog.show()
+    qt_app.processEvents()
+
+    assert not dialog.cloud_import_button.isVisible()
+    assert dialog.cloud_settings_button.isVisible()
+    assert dialog.cloud_settings_button.isEnabled()
+    assert not dialog.cloud_settings_button.geometry().isEmpty()
+    assert (
+        dialog.cloud_settings_button.width()
+        >= dialog.cloud_settings_button.sizeHint().width()
+    )
+    assert dialog.cloud_feedback.text() == text.CLOUD_IMPORT_NEEDS_SETTINGS
+    dialog.cloud_settings_button.click()
+    assert requested == [True]
+    dialog.close()
+
+
+def test_empty_cloud_result_ends_with_truthful_non_loading_state() -> None:
+    qt_app = app()
+
+    def import_cloud(cancellation):
+        cancellation.checkpoint()
+        return CloudImportPayload(context(), 0, 0)
+
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        context(),
+        Service(),
+        cloud_import_workflow=import_cloud,
+    )
+    dialog.show()
+    dialog.cloud_import_button.click()
+    wait_for_save(qt_app, dialog)
+
+    assert dialog.cloud_feedback.text() == text.CLOUD_IMPORT_EMPTY
+    assert dialog.cloud_feedback.property("state") == "empty"
+    assert dialog.cloud_import_button.isEnabled()
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Istoric Tuya indisponibil", text.CLOUD_IMPORT_PERMISSION_UNAVAILABLE),
+        ("Tuya este ocupat", text.CLOUD_IMPORT_RATE_LIMITED),
+        ("Prea multe date Tuya", text.CLOUD_IMPORT_RESPONSE_LIMIT),
+        ("Eroare import", text.CLOUD_IMPORT_FAILED),
+    ],
+)
+def test_cloud_failure_restores_action_and_terminal_status(title, expected) -> None:
+    qt_app = app()
+
+    def import_cloud(cancellation):
+        cancellation.checkpoint()
+        raise UserFacingError(title, "Mesaj de test")
+
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        context(),
+        Service(),
+        cloud_import_workflow=import_cloud,
+    )
+    errors = []
+    dialog.error_raised.connect(errors.append)
+    dialog.show()
+    dialog.cloud_import_button.click()
+    wait_for_save(qt_app, dialog)
+
+    assert errors and errors[0].title == title
+    assert dialog.cloud_feedback.text() == expected
+    assert dialog.cloud_feedback.text() != text.CLOUD_IMPORTING
+    assert dialog.cloud_feedback.property("state") == "error"
+    assert dialog.cloud_import_button.isEnabled()
+    dialog.close()
+
+
+def test_close_during_cloud_import_detaches_late_results_and_owner_drains() -> None:
+    qt_app = app()
+    owner = WorkerOwner(qt_app)
+    started = threading.Event()
+
+    def import_cloud(cancellation):
+        started.set()
+        while not cancellation.cancelled:
+            cancellation.wait(0.01)
+        cancellation.checkpoint()
+        raise AssertionError("cancelled import unexpectedly continued")
+
+    dialog = CalculationDialog(
+        Device("meter-1", "Casa"),
+        context(),
+        Service(),
+        cloud_import_workflow=import_cloud,
+        worker_owner=owner,
+    )
+    dialog.show()
+    dialog.cloud_import_button.click()
+    deadline = time.monotonic() + 1
+    while not started.is_set() and time.monotonic() < deadline:
+        qt_app.processEvents()
+    assert started.is_set() and owner.active
+
+    dialog.close()
+    qt_app.processEvents()
+    assert not dialog.isVisible()
+    deadline = time.monotonic() + 2
+    while owner.active and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.005)
+
+    assert not owner.active
+    assert dialog.cloud_feedback.text() == text.CLOUD_IMPORTING
+
+
 def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None:
     qt_app = app()
     original = qt_app.palette()
@@ -323,6 +545,9 @@ def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None
             Device("meter-1", "Contor principal — Strada Independenței"),
             context(),
             Service(),
+            cloud_import_workflow=lambda cancellation: CloudImportPayload(
+                context(), 1, 0
+            ),
         )
         dialog.show()
         qt_app.processEvents()
@@ -333,6 +558,34 @@ def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None
         assert all(
             label.palette().color(QPalette.ColorRole.WindowText) == QColor("#667085")
             for label in labels
+        )
+        cloud_labels = (
+            dialog.cloud_title,
+            dialog.cloud_help,
+            dialog.cloud_feedback,
+        )
+        assert all(
+            label.isVisible()
+            and not label.geometry().isEmpty()
+            and bool(label.text())
+            for label in cloud_labels
+        )
+        assert dialog.cloud_import_button.isVisible()
+        assert not dialog.cloud_import_button.geometry().isEmpty()
+        assert dialog.height() >= dialog.sizeHint().height()
+        assert dialog.close_button.geometry().bottom() < dialog.rect().bottom()
+        assert dialog.save_button.geometry().bottom() < dialog.rect().bottom()
+        assert (
+            dialog.cloud_title.palette().color(QPalette.ColorRole.WindowText)
+            == QColor("#1d2939")
+        )
+        assert (
+            dialog.cloud_help.palette().color(QPalette.ColorRole.WindowText)
+            == QColor("#475467")
+        )
+        assert (
+            dialog.cloud_feedback.palette().color(QPalette.ColorRole.WindowText)
+            == QColor("#344054")
         )
 
         dialog.start_reading.showPopup()
@@ -348,9 +601,7 @@ def test_dark_palette_labels_and_reading_popup_remain_readable(tmp_path) -> None
         )
         dialog.start_reading.hidePopup()
 
-        screenshot = QPixmap(dialog.size())
-        screenshot.fill(QColor("#f8fafc"))
-        dialog.render(screenshot)
+        screenshot = dialog.grab()
         assert screenshot.save(str(tmp_path / "calculation-dialog-dark.png"))
         dialog.close()
     finally:

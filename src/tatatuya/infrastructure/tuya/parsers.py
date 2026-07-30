@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
-from tatatuya.domain.energy import canonical_energy_unit
+from tatatuya.domain.energy import (
+    MAX_ENERGY_SCALE,
+    DecimalExpansionError,
+    canonical_decimal,
+    canonical_energy_unit,
+)
 from tatatuya.domain.errors import (
     EnergySpecificationError,
     UnsupportedEnergyDeviceError,
@@ -63,7 +68,9 @@ def parse_device_page(result: Any) -> DevicePage:
                 product_id=_optional_string(row.get("product_id")),
                 product_name=_optional_string(row.get("product_name")),
                 category=_optional_string(row.get("category")),
-                online=row.get("online") if isinstance(row.get("online"), bool) else None,
+                online=row.get("online")
+                if isinstance(row.get("online"), bool)
+                else None,
                 raw_device_json=_dump(redact_sensitive_fields(row)),
                 present_in_tuya=True,
             )
@@ -106,7 +113,9 @@ def parse_energy_specification(result: Any) -> EnergySpecification:
         raise TuyaPayloadError(
             "Specification status collection contains an invalid row", raw_json
         )
-    candidates = [row for row in rows if row.get("code") in SUPPORTED_FORWARD_ENERGY_CODES]
+    candidates = [
+        row for row in rows if row.get("code") in SUPPORTED_FORWARD_ENERGY_CODES
+    ]
     if not candidates:
         raise UnsupportedEnergyDeviceError(
             "Device has no supported cumulative forward-energy specification",
@@ -134,6 +143,7 @@ def parse_energy_specification(result: Any) -> EnergySpecification:
         isinstance(scale, bool)
         or not isinstance(scale, int)
         or scale < 0
+        or scale > MAX_ENERGY_SCALE
         or not isinstance(unit, str)
         or not unit.strip()
     ):
@@ -166,10 +176,16 @@ def parse_batch_status(result: Any) -> dict[str, DeviceStatus]:
         if not device_id:
             continue
         status_rows = _find_list(row.get("status"), ("list",))
+        try:
+            raw_json = _dump(redact_sensitive_fields(row))
+        except TuyaPayloadError:
+            # One malformed device diagnostic must not discard other usable
+            # meters from the same successful batch response.
+            continue
         parsed[str(device_id)] = DeviceStatus(
             str(device_id),
             _parse_status_values(status_rows),
-            _dump(redact_sensitive_fields(row)),
+            raw_json,
         )
     return parsed
 
@@ -219,10 +235,14 @@ def _optional_string(value: Any) -> str | None:
 def _dump(value: Any) -> str:
     if isinstance(value, Mapping):
         items = sorted(value.items(), key=lambda item: str(item[0]))
-        return "{" + ",".join(
-            f"{json.dumps(str(key), ensure_ascii=False)}:{_dump(item)}"
-            for key, item in items
-        ) + "}"
+        return (
+            "{"
+            + ",".join(
+                f"{json.dumps(str(key), ensure_ascii=False)}:{_dump(item)}"
+                for key, item in items
+            )
+            + "}"
+        )
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_dump(item) for item in value) + "]"
     if value is None:
@@ -236,9 +256,12 @@ def _dump(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, Decimal):
-        if value.is_finite():
-            return format(value, "f")
-        raise ValueError("Diagnostic JSON cannot contain a non-finite Decimal")
+        try:
+            return canonical_decimal(value)
+        except (DecimalExpansionError, ValueError) as exc:
+            raise TuyaPayloadError(
+                "Diagnostic JSON contains an invalid or oversized Decimal"
+            ) from exc
     if isinstance(value, float):
         return repr(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")

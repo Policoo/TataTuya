@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 import os
 
@@ -176,6 +176,41 @@ def test_history_dialog_has_clear_empty_states() -> None:
     qt_app.processEvents()
     assert dialog.calculations_empty.isVisible()
     assert not dialog.calculation_detail.isVisible()
+    dialog.close()
+
+
+def test_cloud_reading_shows_import_and_bucket_provenance() -> None:
+    qt_app = app()
+    cloud = Reading(
+        "meter-1",
+        NOW,
+        "123456",
+        2,
+        "kWh",
+        Decimal("1234.56"),
+        "cloud_daily",
+        "{}",
+        3,
+        imported_at_utc=NOW + timedelta(hours=1),
+        source_code="forward_energy_total",
+        cloud_day_local_date=date(2026, 12, 3),
+        cloud_day_timezone="Europe/Amsterdam",
+        cloud_day_utc_offset="+01:00",
+    )
+    dialog = HistoryDialog(
+        Device("meter-1", "Casa"),
+        HistoryContext("meter-1", (cloud,), ()),
+    )
+    dialog.show()
+    qt_app.processEvents()
+
+    source_item = dialog.readings_table.item(0, 4)
+    details_item = dialog.readings_table.item(0, 5)
+    assert source_item is not None and source_item.text() == text.SOURCE_CLOUD_DAILY
+    assert details_item is not None
+    details = details_item.text()
+    assert "03.12.2026" in details
+    assert "Europe/Amsterdam (+01:00)" in details
     dialog.close()
 
 

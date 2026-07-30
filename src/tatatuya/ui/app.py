@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 from tatatuya.domain.errors import UserFacingError
@@ -22,28 +23,101 @@ from tatatuya.infrastructure.repositories.settings import (
     DatabaseSettingsStore,
     SettingsRepository,
 )
+from tatatuya.infrastructure.system_timezone import load_system_timezone
 from tatatuya.infrastructure.tuya.client import TuyaClient
+from tatatuya.infrastructure.tuya.report_logs import TuyaReportLogGateway
 from tatatuya.services.billing_service import BillingService, CalculationContext
+from tatatuya.services.cloud_history_service import (
+    CloudHistoryService,
+    HistoricalScaleContract,
+)
 from tatatuya.services.device_service import DeviceService
 from tatatuya.services.history_service import HistoryContext, HistoryService
-from tatatuya.services.reading_service import ReadingService, StatusCaptureResult
+from tatatuya.services.reading_service import (
+    DeviceRefreshResult,
+    ReadingService,
+    StatusCaptureResult,
+)
 from tatatuya.services.settings_service import SettingsService
+from tatatuya.domain.cancellation import CancellationContext, uncancelled_context
 from tatatuya.ui import text
 from tatatuya.ui.components.device_table import DeviceTableRow, should_show_device
-from tatatuya.ui.dialogs.calculate import CalculationDialog
+from tatatuya.ui.dialogs.calculate import CalculationDialog, CloudImportPayload
 from tatatuya.ui.dialogs.device_info import DeviceInfoDialog
 from tatatuya.ui.dialogs.device_status import DeviceStatusDialog
 from tatatuya.ui.dialogs.error import ErrorDialog
 from tatatuya.ui.dialogs.history import HistoryDialog
 from tatatuya.ui.dialogs.settings import REGION_LABELS, SavedSettings, SettingsDialog
 from tatatuya.ui.main_window import InitialState, MainWindow
-from tatatuya.ui.workers import log_unexpected_exception
+from tatatuya.ui.workers import WorkerOwner, log_unexpected_exception
 
 
 @dataclass(frozen=True, slots=True)
 class SettingsDialogContext:
     service: SettingsService
     settings: TuyaSettings | None
+
+
+# Tuya documents report-log values as reports of the selected DP and defines a
+# value DP's wire value through that DP model's unit and decimal scale. Runtime
+# specification bracketing still rejects a model change during an import.
+CLOUD_HISTORY_CONTRACT = HistoricalScaleContract(
+    True,
+    "tuya-report-log-and-dp-model-docs-2026-07-30",
+)
+
+
+class ShutdownCoordinator(QObject):
+    """Defer the one real application quit until owned workers have drained."""
+
+    def __init__(
+        self,
+        application: QApplication,
+        window: MainWindow,
+        workers: WorkerOwner,
+    ) -> None:
+        super().__init__(application)
+        self.application = application
+        self.window = window
+        self.workers = workers
+        self.pending = False
+        self._issuing_quit = False
+        workers.all_finished.connect(self._workers_finished)
+
+    def request_quit(self) -> None:
+        if self.pending:
+            return
+        self.pending = True
+        self.window._close_when_idle = True
+        self.window.refresh_button.setEnabled(False)
+        self.window.settings_button.setEnabled(False)
+        self.window.table.set_remote_enabled(False)
+        self.window.status_label.setText(text.CLOSING_AFTER_WORK)
+        self.workers.cancel_all()
+        if not self.workers.active:
+            QTimer.singleShot(0, self._finish)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
+        if (
+            watched is self.application
+            and event.type() is QEvent.Type.Quit
+            and not self._issuing_quit
+        ):
+            self.request_quit()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _workers_finished(self) -> None:
+        if self.pending:
+            QTimer.singleShot(0, self._finish)
+
+    def _finish(self) -> None:
+        if not self.pending or self.workers.active:
+            return
+        self.window._allow_close = True
+        self.window.close()
+        self._issuing_quit = True
+        QTimer.singleShot(0, self.application.quit)
 
 
 def load_stylesheet() -> str:
@@ -53,7 +127,11 @@ def load_stylesheet() -> str:
     return stylesheet.replace("__TATATUYA_DOWN_ARROW__", arrow_path)
 
 
-def _load_initial_state(database: Database) -> InitialState:
+def _load_initial_state(
+    database: Database, cancellation: CancellationContext | None = None
+) -> InitialState:
+    cancellation = cancellation or uncancelled_context()
+    cancellation.checkpoint()
     database.initialize()
     with database.connect() as connection:
         settings = SettingsRepository(connection).load_tuya()
@@ -65,35 +143,54 @@ def _load_initial_state(database: Database) -> InitialState:
         for device in devices
         if should_show_device(device, latest.get(device.device_id))
     ]
-    refresh = (
-        (lambda: _refresh_workflow(database, settings)) if configured else None
-    )
+    refresh: Callable[[CancellationContext], list[DeviceRefreshResult]] | None = None
+    if settings is not None and settings.is_complete:
+
+        def refresh_workflow(context: CancellationContext):
+            return _refresh_workflow(database, settings, context)
+
+        refresh = refresh_workflow
     return InitialState(rows, configured, refresh)
 
 
-def _refresh_workflow(database: Database, settings):
+def _refresh_workflow(
+    database: Database,
+    settings: TuyaSettings,
+    cancellation: CancellationContext | None = None,
+):
+    cancellation = cancellation or uncancelled_context()
+    cancellation.checkpoint()
     with database.connect() as connection:
-        gateway = TuyaClient(settings)
+        gateway = TuyaClient(settings, cancellation=cancellation)
         devices = DeviceRepository(connection)
         reading_store = ReadingRepository(connection)
         device_service = DeviceService(gateway, devices)
-        return ReadingService(gateway, device_service, reading_store).refresh()
+        return ReadingService(gateway, device_service, reading_store).refresh(
+            cancellation
+        )
 
 
-def _prepare_calculation(database: Database, device_id: str) -> CalculationContext:
+def _prepare_calculation(
+    database: Database,
+    device_id: str,
+    cancellation: CancellationContext | None = None,
+) -> CalculationContext:
+    cancellation = cancellation or uncancelled_context(15)
+    cancellation.checkpoint()
     database.initialize()
     with database.connect() as connection:
-        settings = SettingsRepository(connection).load_tuya()
-        if settings is None:
-            raise UserFacingError(
-                "Setări incomplete",
-                "Configurați moneda aplicației înainte de calcul.",
-            )
-        return BillingService(
+        settings_repository = SettingsRepository(connection)
+        currency = settings_repository.load_currency()
+        settings = settings_repository.load_tuya()
+        context = BillingService(
             ReadingRepository(connection),
             CalculationRepository(connection),
             DevicePreferenceRepository(connection),
-        ).prepare(device_id, settings.currency)
+        ).prepare(device_id, currency)
+        return replace(
+            context,
+            tuya_configured=settings is not None and settings.is_complete,
+        )
 
 
 def _save_calculation(
@@ -103,7 +200,10 @@ def _save_calculation(
     end_reading_id: int,
     entered_price: str,
     currency: Currency,
+    cancellation: CancellationContext | None = None,
 ) -> Calculation:
+    cancellation = cancellation or uncancelled_context(15)
+    cancellation.checkpoint()
     with database.connect() as connection:
         return BillingService(
             ReadingRepository(connection),
@@ -118,7 +218,52 @@ def _save_calculation(
         )
 
 
-def _prepare_history(database: Database, device_id: str) -> HistoryContext:
+def _import_cloud_history(
+    database: Database,
+    device_id: str,
+    cancellation: CancellationContext,
+) -> CloudImportPayload:
+    cancellation.checkpoint()
+    with database.connect() as connection:
+        settings = SettingsRepository(connection).load_tuya()
+        if settings is None or not settings.is_complete:
+            raise UserFacingError(
+                "Setări incomplete",
+                "Configurați conexiunea Tuya înainte de importul cloud.",
+            )
+        device = DeviceRepository(connection).get(device_id)
+        if device is None:
+            raise UserFacingError(
+                "Contor necunoscut",
+                "Contorul selectat nu mai există în baza de date locală.",
+            )
+        client = TuyaClient(settings, cancellation=cancellation)
+        result = CloudHistoryService(
+            client,
+            TuyaReportLogGateway(client),
+            ReadingRepository(connection),
+            CLOUD_HISTORY_CONTRACT,
+        ).import_recent(
+            device,
+            load_system_timezone(),
+            cancellation,
+        )
+        cancellation.checkpoint()
+        context = BillingService(
+            ReadingRepository(connection),
+            CalculationRepository(connection),
+            DevicePreferenceRepository(connection),
+        ).prepare(device_id, settings.currency)
+        return CloudImportPayload(context, result.new_count, result.reused_count)
+
+
+def _prepare_history(
+    database: Database,
+    device_id: str,
+    cancellation: CancellationContext | None = None,
+) -> HistoryContext:
+    cancellation = cancellation or uncancelled_context(15)
+    cancellation.checkpoint()
     database.initialize()
     with database.connect() as connection:
         return HistoryService(
@@ -127,7 +272,13 @@ def _prepare_history(database: Database, device_id: str) -> HistoryContext:
         ).prepare(device_id)
 
 
-def _capture_status(database: Database, device_id: str) -> StatusCaptureResult:
+def _capture_status(
+    database: Database,
+    device_id: str,
+    cancellation: CancellationContext | None = None,
+) -> StatusCaptureResult:
+    cancellation = cancellation or uncancelled_context(15)
+    cancellation.checkpoint()
     database.initialize()
     with database.connect() as connection:
         settings = SettingsRepository(connection).load_tuya()
@@ -136,16 +287,20 @@ def _capture_status(database: Database, device_id: str) -> StatusCaptureResult:
                 "Setări incomplete",
                 "Configurați conexiunea Tuya înainte de a încărca statusul.",
             )
-        gateway = TuyaClient(settings)
+        gateway = TuyaClient(settings, cancellation=cancellation)
         devices = DeviceRepository(connection)
         return ReadingService(
             gateway,
             DeviceService(gateway, devices),
             ReadingRepository(connection),
-        ).capture_individual_status(device_id)
+        ).capture_individual_status(device_id, cancellation)
 
 
-def _prepare_settings(database: Database) -> SettingsDialogContext:
+def _prepare_settings(
+    database: Database, cancellation: CancellationContext | None = None
+) -> SettingsDialogContext:
+    cancellation = cancellation or uncancelled_context(15)
+    cancellation.checkpoint()
     database.initialize()
     service = SettingsService(
         DatabaseSettingsStore(database),
@@ -157,7 +312,12 @@ def _prepare_settings(database: Database) -> SettingsDialogContext:
 
 def create_main_window(database: Database | None = None) -> MainWindow:
     database = database or Database()
-    window = MainWindow(bootstrap_workflow=lambda: _load_initial_state(database))
+    application = QApplication.instance()
+    owner = WorkerOwner(application if isinstance(application, QApplication) else None)
+    window = MainWindow(
+        bootstrap_workflow=lambda context: _load_initial_state(database, context),
+        worker_owner=owner,
+    )
 
     def show_error(error, parent=None) -> None:
         ErrorDialog(error, parent or window).exec()
@@ -172,10 +332,9 @@ def create_main_window(database: Database | None = None) -> MainWindow:
                 REGION_LABELS,
                 window,
                 initial_settings=payload.settings,
+                worker_owner=owner,
             )
-            dialog.error_raised.connect(
-                lambda error: show_error(error, dialog)
-            )
+            dialog.error_raised.connect(lambda error: show_error(error, dialog))
 
             def remember_saved_settings(result: object) -> None:
                 nonlocal saved_result
@@ -188,13 +347,15 @@ def create_main_window(database: Database | None = None) -> MainWindow:
             saved = saved_result
             if saved is not None:
                 window.apply_settings(
-                    lambda: _refresh_workflow(database, saved.settings),
+                    lambda context: _refresh_workflow(
+                        database, saved.settings, context
+                    ),
                     connection_verified=saved.connection_verified,
                     refresh_when_verified=True,
                 )
 
         window.run_background_operation(
-            lambda: _prepare_settings(database),
+            lambda context: _prepare_settings(database, context),
             open_dialog,
             text.LOADING_SETTINGS,
         )
@@ -203,24 +364,55 @@ def create_main_window(database: Database | None = None) -> MainWindow:
         def open_dialog(payload: object) -> None:
             if not isinstance(payload, CalculationContext):
                 return
+            remote_available = (
+                payload.tuya_configured and CLOUD_HISTORY_CONTRACT.verified
+            )
+            cloud_workflow: Callable[..., CloudImportPayload] | None = None
+            if remote_available:
+
+                def run_cloud_workflow(context):
+                    return _import_cloud_history(
+                        database,
+                        device.device_id,
+                        context,
+                    )
+
+                cloud_workflow = run_cloud_workflow
             dialog = CalculationDialog(
                 device,
                 payload,
-                lambda start_id, end_id, entered: _save_calculation(
+                lambda start_id, end_id, entered, context: _save_calculation(
                     database,
                     device.device_id,
                     start_id,
                     end_id,
                     entered,
                     payload.currency,
+                    context,
                 ),
                 window,
+                cloud_import_workflow=cloud_workflow,
+                cloud_unavailable_text=(
+                    None
+                    if remote_available
+                    else text.CLOUD_IMPORT_NOT_AVAILABLE
+                    if payload.tuya_configured
+                    else None
+                ),
+                cloud_settings_available=not payload.tuya_configured,
+                worker_owner=owner,
             )
             dialog.error_raised.connect(lambda error: show_error(error, dialog))
+
+            def open_cloud_settings() -> None:
+                dialog.reject()
+                QTimer.singleShot(0, show_settings)
+
+            dialog.settings_requested.connect(open_cloud_settings)
             dialog.exec()
 
         window.run_background_operation(
-            lambda: _prepare_calculation(database, device.device_id),
+            lambda context: _prepare_calculation(database, device.device_id, context),
             open_dialog,
             text.PREPARING_CALCULATION,
         )
@@ -232,7 +424,7 @@ def create_main_window(database: Database | None = None) -> MainWindow:
             HistoryDialog(device, payload, window).exec()
 
         window.run_background_operation(
-            lambda: _prepare_history(database, device.device_id),
+            lambda context: _prepare_history(database, device.device_id, context),
             open_dialog,
             text.PREPARING_HISTORY,
         )
@@ -249,9 +441,10 @@ def create_main_window(database: Database | None = None) -> MainWindow:
             DeviceStatusDialog(device, payload, window).exec()
 
         window.run_background_operation(
-            lambda: _capture_status(database, device.device_id),
+            lambda context: _capture_status(database, device.device_id, context),
             open_dialog,
             text.LOADING_STATUS,
+            timeout_seconds=15,
         )
 
     window.settings_requested.connect(show_settings)
@@ -286,8 +479,19 @@ def run() -> None:
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
     app.setApplicationName("TataTuya")
+    app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(load_stylesheet())
     window = create_main_window()
+    coordinator = ShutdownCoordinator(app, window, window.worker_owner)
+    window.shutdown_requested = coordinator.request_quit
+    app.installEventFilter(coordinator)
+    window._shutdown_coordinator = coordinator
+    app.aboutToQuit.connect(lambda: _assert_no_active_workers(window.worker_owner))
     install_exception_hook(window)
     window.show()
     sys.exit(app.exec())
+
+
+def _assert_no_active_workers(workers: WorkerOwner) -> None:
+    if workers.active:
+        raise RuntimeError("QApplication quit while workflow threads were active")

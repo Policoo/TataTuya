@@ -15,7 +15,9 @@ total price = period consumption * price per kWh
 ```
 
 The first successful status retrieval for a meter establishes its first stored
-reading. It cannot produce a bill until a later reading exists.
+reading. A later reading can come from another current-status capture or from a
+sparse Tuya Cloud history import. This lets a user combine, for example, a saved
+June boundary reading with a July boundary reading imported a few days late.
 
 ## 2. Scope
 
@@ -26,7 +28,7 @@ reading. It cannot produce a bill until a later reading exists.
 - Retrieve statuses in batches and individually.
 - Discover the forward-energy data point, unit, and scale from each device's
   specification.
-- Store every successful energy reading in SQLite.
+- Store every usable current-status energy reading in SQLite.
 - Calculate a cost for one meter between two stored readings.
 - Remember the most recently used price separately for each meter.
 - Select a global currency of RON or EUR.
@@ -35,11 +37,28 @@ reading. It cannot produce a bill until a later reading exists.
 - Display consistent Romanian error dialogs.
 - Distribute an Apple Silicon application in an unsigned `.dmg`.
 
+### Added by the cloud-history extension
+
+- Load cumulative forward-energy status-report events from Tuya Cloud for one
+  meter for the most recent seven local calendar days, including today.
+- Import at most one representative cloud reading per returned local calendar
+  day without requiring TataTuya to have been open at that time.
+- Combine imported cloud readings and existing saved readings in the same
+  calculation selectors.
+- Retain imported daily readings locally even when no calculation is saved.
+
+Cloud history means data exposed to the configured developer project by Tuya's
+documented read-only OpenAPI. It does not imply that every item visible in the
+Tuya consumer application is available to TataTuya. Availability and retention
+depend on the Tuya project, permissions, service edition, device, and data point.
+
 ### Deliberately excluded for now
 
 - Sending commands or changes to Tuya devices.
 - Renaming meters in TataTuya.
 - Automatic scheduled/background polling while the app is closed.
+- Scraping, reverse-engineering, or using private endpoints from the Tuya
+  consumer application.
 - Editing or deleting readings and calculations.
 - Tiered tariffs, VAT, fixed fees, or other billing adjustments.
 - Converting old amounts when the selected currency changes.
@@ -72,8 +91,18 @@ The top bar contains:
 - `Actualizează` button
 - `Setări` button
 
-There is no setup wizard. When credentials are absent or incomplete, the main
-area directs the user to Settings.
+There is no setup wizard. When credentials are absent or incomplete and no
+cached meter has usable local history, the main area directs the user to
+Settings.
+
+When cached meters have readings or calculations, the device table remains
+visible regardless of Tuya credential completeness. A Romanian warning banner,
+`Conexiunea Tuya nu este configurată. Datele salvate rămân disponibile.`, links
+to Settings without replacing local history. `Calculează`, `Istoric`, and `Info`
+remain available. Remote-only `Actualizează`, `Status`, and Tuya Cloud import are
+disabled until complete credentials are saved. A transition to incomplete Tuya
+settings—including credential clearing if that operation is supported—never
+hides cached rows or makes the application currency unreadable.
 
 ### Device table
 
@@ -135,8 +164,14 @@ Every successful status call creates a reading, including calls that return the
 same value as the preceding reading. A failed or offline device retains its most
 recent saved reading but receives no new entry.
 
-Opening `Status` performs an individual status request. It also records a new
-reading when the response contains a usable forward-energy value.
+For each completed batch-status response, all usable meter results are stored in
+one atomic capture transaction. Opening `Status` first revalidates that meter's
+energy specification and only then performs the individual status request; a
+usable response is stored in one atomic capture transaction. A database failure
+rolls back that response's whole capture and uses the shared Romanian error
+experience rather than leaving a partial batch. Only one Refresh or individual
+Status capture runs at once; `Actualizează` and every `Status` action remain
+disabled until that capture boundary finishes.
 
 ## 6. Energy extraction
 
@@ -158,12 +193,23 @@ Rules:
   spellings are `kWh` and `kW·h`.
 - Scaled Wh values are converted to kWh. Supported Tuya spellings are `Wh` and
   `W·h`.
-- Raw value, scale, source unit, normalized kWh, redacted raw status, and the
-  redacted raw specification used for capture are retained.
+- A Tuya energy scale is accepted only as an integer from 0 through 123. The
+  upper bound is derived from the 128-character canonical quantity limit after
+  the additional three-place Wh-to-kWh conversion; a larger scale is an invalid
+  specification, not a value to guess, round, or truncate.
+- Before fixed-point rendering, both the raw energy value and its normalized kWh
+  result must fit an exact canonical decimal string of at most 128 characters.
+  The bound is checked from the `Decimal` tuple without first materializing the
+  fixed-point string. This rule applies to current batch/status captures and
+  cloud history alike.
+- Raw value, scale, source unit, normalized kWh, redacted raw status/report
+  event, and the redacted raw specification used for normalization are retained.
 - Missing, ambiguous, non-numeric, or unsupported energy data raises a clear
   error rather than being guessed.
 - A changed or invalid specification must not reinterpret old readings; each
-  reading stores the scale and unit used when it was captured.
+  reading stores the scale, unit, and specification snapshot used to normalize
+  it. Current-status readings use a specification revalidated at capture time;
+  imported cloud readings follow the additional safety rules in Section 7.
 
 ## 7. Calculation dialog
 
@@ -180,6 +226,56 @@ The calculation dialog displays:
 - Price per kWh
 - Currency
 - Final total
+- Optional compact Tuya Cloud card with
+  `Importă citirile din ultimele 7 zile`
+
+The reading selectors always contain persisted TataTuya readings. They may mix
+current `batch`/`status` captures and daily readings imported from Tuya Cloud.
+Billing therefore keeps one workflow: it receives two persisted reading IDs and
+saves the same immutable calculation regardless of reading provenance.
+
+The cloud card loads only after the explicit import action. The service derives
+the fixed window from local today minus six days through the current instant;
+the UI does not expose a date-range picker. This seven-day contract applies to
+every caller, not only the calculation dialog. A future advanced range requires
+a verified paid-retention entitlement and a separate product decision.
+
+With complete Tuya credentials, the card exposes the single seven-day import
+action. Missing credentials show the separate
+`Configurează conexiunea în Setări` state. Device Log entitlement, permission,
+empty-history, and meter-cadence limitations are checked by the attempted import
+and reported without affecting calculations from local readings.
+
+Loading is asynchronous. The complete remote result is validated before any
+write. A successful load atomically imports at most one representative reading
+per returned local calendar day, keeps those readings even if the dialog closes
+without a calculation, refreshes the unified selectors, and reports how many
+new and existing daily readings were found. The UI states clearly that importing
+saves daily readings locally while remaining read-only toward Tuya.
+
+Closing Calculate during an import hides the dialog, cancels remote work, and
+prevents late results from updating it. Quitting the application during any
+background workflow—bootstrap, Refresh, Settings loading/testing/saving, Status,
+calculation preparation/saving, or cloud import—shows a non-blocking Romanian
+closing state, keeps processing Qt events, and requests cooperative
+cancellation. A canceled workflow starts no later remote call or database
+transaction except for one required current-status capture: once an individual
+or batch status request has started after specification revalidation, that
+request and the atomic persistence of every usable result it returns form one
+cancellation-safe boundary. Cancellation prevents the next remote request but
+does not discard this completed response. Other atomic writes already inside
+their documented commit boundary may finish or roll back. Quit completes after
+all workers finish; an in-flight status capture has an eleven-second maximum
+shutdown-drain bound covering its remote request, required capture transaction,
+and Qt completion delivery. The UI must not freeze and a running worker must
+never be destroyed during shutdown.
+
+`Calculează` opens the dialog even when fewer than two readings are saved
+locally. It explains that more readings are needed while leaving cloud import
+available when Tuya settings are complete. Missing, invalid, expired, or removed
+Tuya credentials disable only cloud import; they never prevent opening the
+dialog or calculating from persisted readings. Currency remains independently
+available as an application setting.
 
 The user chooses a local date before choosing the exact reading for that date.
 Changing a date filters its reading dropdown to measurements captured on that
@@ -197,11 +293,13 @@ entries are available.
 
 ### Defaults
 
-- The ending reading defaults to the newest available reading.
+- The ending reading defaults to the newest persisted reading.
 - The starting reading defaults to the ending reading used by the meter's most
   recent saved calculation.
-- With no previous calculation, the starting reading defaults to the earliest
-  available reading.
+- With no previous calculation, the start defaults to the earliest persisted
+  reading.
+- After a successful cloud import, the selectors are rebuilt from all persisted
+  readings and these same defaults are reapplied.
 
 ### Price behavior
 
@@ -226,7 +324,7 @@ entries are available.
 
 A calculation is rejected with a Romanian error when:
 
-- Fewer than two readings exist.
+- Fewer than two persisted readings exist.
 - Start and end refer to the same reading.
 - The ending time precedes the starting time.
 - The ending value is lower than the starting value, such as after meter reset
@@ -234,6 +332,78 @@ A calculation is rejected with a Romanian error when:
 - No current or remembered price exists.
 - The price is malformed, zero, or negative.
 - Either reading uses unsupported or incompatible units.
+- A cloud import is requested with unavailable Tuya access or a response outside
+  the safety limits.
+
+### Cloud-history safety rules
+
+- TataTuya queries only the exact cumulative-forward-energy code selected from
+  the meter specification. It does not request or infer unrelated data points.
+- Tuya's [status-report-log API](https://developer.tuya.com/en/docs/cloud/269c6a6b6b?id=Kduvi4xnjhav2)
+  returns the values reported by the requested DP code. Tuya's
+  [things-data-model contract](https://developer.tuya.com/en/docs/cloud/bd68171262?id=Kcp4utbhzzfgo)
+  and [DP protocol](https://developer.tuya.com/en/docs/iot-device-dev/TuyaOS-iot_abi_dp_ctrl?id=Kcoglhn5r7ajr)
+  define a value DP as an integer wire value interpreted with that DP model's
+  unit and decimal scale. TataTuya therefore uses the exact selected status DP's
+  specification to normalize its report-log values; it does not infer a scale
+  from the magnitude or from unrelated events.
+- TataTuya revalidates and snapshots the specification immediately before the
+  first page and verifies the same code, unit, and scale after the last page. A
+  malformed, ambiguous, changed-during-load, or unsupported specification
+  rejects the entire import. Each stored reading retains that specification, so
+  later metadata changes do not reinterpret it.
+- Report cadence is device-controlled. Dates without a cumulative-DP report
+  simply produce no imported reading; TataTuya never manufactures a midnight
+  value.
+- A successful v2.1 terminal page may contain only `hasMore: false`, omitting
+  device ID, total, and logs. TataTuya treats that observed shape as an empty
+  result. If Tuya does return a device ID, it must match the requested meter;
+  an explicit mismatch still rejects the load.
+- Tuya event timestamps are epoch milliseconds. TataTuya converts the most
+  recent seven local dates to exact UTC bounds, caps today's upper bound at the
+  current instant, rejects out-of-range returned events, and displays every
+  imported event's real local timestamp. It never labels a representative as an
+  exact midnight reading.
+- Cloud values are parsed and normalized with exact decimal handling. Binary
+  floating-point is not used. The shared energy limits above apply before
+  normalization, fingerprinting, or persistence; exponent forms whose raw or
+  normalized canonical representation would exceed 128 characters are rejected.
+- Exact decimals in successful Tuya device, specification, status, and report
+  payload diagnostics use the same 128-character pre-render bound. An oversized
+  decimal rejects that successful device, specification, individual-status, or
+  report payload before fixed rendering. In a batch-status response, only the
+  affected meter entry is discarded so other usable meters still create their
+  required readings. In bounded HTTP error or `success=false` diagnostics, such
+  a scalar is discarded and replaced with a fixed technical marker; it is never
+  expanded, rounded, or exposed as upstream text.
+- Successful and error response bodies are read incrementally under transport-
+  enforced raw and decoded size limits before UTF-8 decoding or JSON parsing.
+  Oversized or invalid-UTF-8 responses reject the load safely without retaining
+  or displaying their body.
+- After validating all pages, events are partitioned using the operating
+  system's local timezone captured for that query. For each returned local date,
+  TataTuya selects the earliest valid event at or after local midnight and
+  preserves the event's actual UTC timestamp.
+- The local bucket date, timezone identifier, and UTC offset used for the bucket
+  are retained. At most one automatic cloud reading exists for a meter and local
+  bucket date.
+- Repeated and overlapping imports reuse the immutable daily reading. If a later
+  query reveals an earlier event for an already imported day, TataTuya keeps the
+  existing reading rather than editing it or adding another automatic daily
+  reading.
+- Exact repeated remote rows are deduplicated. Different canonical values at
+  the same device/code/timestamp make the result ambiguous and reject the whole
+  import. Unchanged values at different timestamps remain distinct events before
+  the daily reduction.
+- No daily reading is written until every page, row, bucket, and specification
+  check succeeds. A database failure rolls back the entire import.
+- A successful cloud-history query is not a current status request. Merely
+  importing daily representatives does not weaken the rule that every usable
+  `batch` or `status` response creates a separate reading.
+- Tuya does not document enough metadata to distinguish an empty recent
+  seven-day window from one whose reports have expired. The Romanian UI uses one
+  honest combined empty-or-no-longer-available message rather than claiming a
+  retention error.
 
 ## 8. History
 
@@ -246,7 +416,10 @@ Its tables do not allow cell or row selection.
 - Cumulative kWh value
 - Raw value
 - Scale and original unit
-- Source: batch refresh or individual status request
+- Source: batch refresh, individual status request, or daily Tuya Cloud import
+- For a cloud event, its Tuya event time and local import time
+- For a cloud event, the retained local bucket date and timezone/offset used to
+  select it
 
 ### `Calcule`
 
@@ -278,6 +451,10 @@ must not be displayed as a successful setup.
 ### Application configuration
 
 - Currency dropdown containing RON and EUR
+
+Currency is an application setting and remains readable independently from Tuya
+credentials. Missing or invalid Tuya connection fields may disable remote
+workflows but must not disable calculations from persisted readings.
 
 ## 10. Info and diagnostics
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tatatuya.domain.errors import UnsupportedEnergyDeviceError
+from tatatuya.domain.energy import MAX_ENERGY_SCALE
 from tatatuya.infrastructure.tuya.parsers import (
     TuyaPayloadError,
     parse_batch_status,
@@ -61,7 +62,9 @@ def test_malformed_device_pagination_is_rejected(payload) -> None:
 def test_specification_fixture_finds_scale_and_unit() -> None:
     specification = parse_energy_specification(fixture_result("specification.json"))
     assert (specification.code, specification.unit, specification.scale) == (
-        "forward_energy_total", "kWh", 2
+        "forward_energy_total",
+        "kWh",
+        2,
     )
 
 
@@ -111,6 +114,23 @@ def test_invalid_scale_remains_a_payload_failure() -> None:
                     {
                         "code": "forward_energy_total",
                         "values": {"unit": "kWh", "scale": -1},
+                    }
+                ]
+            }
+        )
+
+
+def test_extreme_scale_is_rejected_as_an_invalid_specification() -> None:
+    with pytest.raises(TuyaPayloadError, match="scale or unit"):
+        parse_energy_specification(
+            {
+                "status": [
+                    {
+                        "code": "forward_energy_total",
+                        "values": {
+                            "unit": "kWh",
+                            "scale": MAX_ENERGY_SCALE + 1,
+                        },
                     }
                 ]
             }
@@ -180,3 +200,98 @@ def test_status_diagnostics_redact_unexpected_sensitive_fields() -> None:
     assert "must-not-be-visible" not in batch["meter-1"].raw_json
     assert individual.raw_json.count("[REDACTED]") == 2
     assert "[REDACTED]" in batch["meter-1"].raw_json
+
+
+@pytest.mark.parametrize(
+    "parse",
+    [
+        lambda value: parse_devices({"devices": [{"id": "meter-1", "extra": value}]}),
+        lambda value: parse_energy_specification(
+            {
+                "extra": value,
+                "status": [
+                    {
+                        "code": "forward_energy_total",
+                        "values": {"unit": "kWh", "scale": 2},
+                    }
+                ],
+            }
+        ),
+        lambda value: parse_individual_status(
+            "meter-1", {"extra": value, "status": []}
+        ),
+    ],
+    ids=["device", "specification", "individual-status"],
+)
+def test_success_diagnostics_reject_extreme_unrelated_decimal_before_rendering(
+    parse, monkeypatch
+) -> None:
+    def unexpected_format(*args, **kwargs):
+        raise AssertionError("fixed rendering must not run")
+
+    monkeypatch.setattr(
+        "tatatuya.domain.energy.format", unexpected_format, raising=False
+    )
+
+    with pytest.raises(TuyaPayloadError, match="oversized Decimal"):
+        parse(Decimal("1e-100000"))
+
+
+@pytest.mark.parametrize(
+    "parse",
+    [
+        lambda value: parse_individual_status(
+            "meter-1",
+            {"status": [{"code": "forward_energy_total", "value": value}]},
+        ),
+    ],
+    ids=["individual-status"],
+)
+def test_status_energy_extreme_exponent_is_rejected_before_rendering(
+    parse, monkeypatch
+) -> None:
+    def unexpected_format(*args, **kwargs):
+        raise AssertionError("fixed rendering must not run")
+
+    monkeypatch.setattr(
+        "tatatuya.domain.energy.format", unexpected_format, raising=False
+    )
+
+    with pytest.raises(TuyaPayloadError, match="oversized Decimal"):
+        parse(Decimal("1e-100000"))
+
+
+@pytest.mark.parametrize("field", ["extra", "energy"])
+def test_batch_status_drops_only_device_with_extreme_decimal_before_rendering(
+    field, monkeypatch
+) -> None:
+    extreme_row = {
+        "id": "meter-bad",
+        "status": [
+            {
+                "code": "forward_energy_total",
+                "value": Decimal("1e-100000") if field == "energy" else 100,
+            }
+        ],
+    }
+    if field == "extra":
+        extreme_row["extra"] = Decimal("1e-100000")
+
+    def unexpected_format(*args, **kwargs):
+        raise AssertionError("fixed rendering must not run")
+
+    monkeypatch.setattr(
+        "tatatuya.domain.energy.format", unexpected_format, raising=False
+    )
+
+    parsed = parse_batch_status(
+        [
+            extreme_row,
+            {
+                "id": "meter-good",
+                "status": [{"code": "forward_energy_total", "value": 200}],
+            },
+        ]
+    )
+
+    assert list(parsed) == ["meter-good"]

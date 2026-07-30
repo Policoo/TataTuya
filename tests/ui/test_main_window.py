@@ -27,9 +27,12 @@ from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import SettingsRepository
+from tatatuya.services.billing_service import CalculationContext
+from tatatuya.services.cloud_history_service import HistoricalScaleContract
 from tatatuya.services.reading_service import DeviceRefreshResult
 from tatatuya.ui import text
 from tatatuya.ui.app import (
+    CLOUD_HISTORY_CONTRACT,
     _load_initial_state,
     _prepare_settings,
     create_main_window,
@@ -45,6 +48,11 @@ def app() -> QApplication:
     instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
+
+
+def test_production_cloud_history_contract_is_enabled() -> None:
+    assert CLOUD_HISTORY_CONTRACT.verified
+    assert CLOUD_HISTORY_CONTRACT.evidence_reference
 
 
 def representative_row() -> DeviceTableRow:
@@ -68,27 +76,98 @@ def representative_row() -> DeviceTableRow:
     )
 
 
-def test_missing_settings_state_directs_user_to_settings() -> None:
+def test_production_cloud_action_follows_proof_gate_and_credentials(
+    monkeypatch,
+) -> None:
+    qt_app = app()
+    row = representative_row()
+    captured: list[dict[str, object]] = []
+
+    class FakeCalculationDialog(QObject):
+        error_raised = Signal(object)
+        settings_requested = Signal()
+
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            captured.append(kwargs)
+
+        def exec(self):
+            return 0
+
+        def reject(self):
+            return None
+
+    latest = row.latest_reading
+    assert latest is not None and latest.id is not None
+    context = CalculationContext(
+        row.device.device_id,
+        (latest,),
+        latest.id,
+        latest.id,
+        Decimal("0.80"),
+        Currency.RON,
+        True,
+    )
+    monkeypatch.setattr("tatatuya.ui.app.CalculationDialog", FakeCalculationDialog)
+    monkeypatch.setattr(
+        "tatatuya.ui.app._load_initial_state",
+        lambda database, cancellation=None: InitialState([row], True, None),
+    )
+    monkeypatch.setattr(
+        "tatatuya.ui.app._prepare_calculation",
+        lambda database, device_id, cancellation=None: context,
+    )
+
+    for verified in (False, True):
+        monkeypatch.setattr(
+            "tatatuya.ui.app.CLOUD_HISTORY_CONTRACT",
+            HistoricalScaleContract(verified),
+        )
+        window = create_main_window(Database())
+        window.show()
+        deadline = time.monotonic() + 2
+        while window.bootstrap_workflow is not None and time.monotonic() < deadline:
+            qt_app.processEvents()
+        window.calculation_requested.emit(row.device)
+        deadline = time.monotonic() + 2
+        while len(captured) < (2 if verified else 1) and time.monotonic() < deadline:
+            qt_app.processEvents()
+            time.sleep(0.005)
+
+        payload = captured[-1]
+        if verified:
+            assert callable(payload["cloud_import_workflow"])
+            assert payload["cloud_unavailable_text"] is None
+        else:
+            assert payload["cloud_import_workflow"] is None
+            assert payload["cloud_unavailable_text"] == text.CLOUD_IMPORT_NOT_AVAILABLE
+        assert payload["cloud_settings_available"] is False
+        window.close()
+        qt_app.processEvents()
+
+
+def test_missing_settings_keeps_cached_rows_and_shows_warning(tmp_path) -> None:
     qt_app = app()
     window = MainWindow(cached_rows=[representative_row()], settings_configured=False)
     window.show()
     qt_app.processEvents()
-    assert window.content.currentWidget() is window.settings_state
-    labels = {
-        label.objectName(): label for label in window.settings_state.findChildren(QLabel)
+    assert window.content.currentWidget() is window.table
+    assert window.settings_warning.isVisible()
+    assert window.settings_warning_label.text() == text.TUYA_NOT_CONFIGURED_WARNING
+    action_widget = window.table.cellWidget(0, 4)
+    buttons = {
+        button.text(): button for button in action_widget.findChildren(QPushButton)
     }
-    heading = labels["EmptyTitle"]
-    detail = labels["EmptyMessage"]
-    assert heading.text() == text.SETTINGS_REQUIRED
-    assert detail.text() == text.SETTINGS_REQUIRED_HELP
-    assert heading.height() >= heading.heightForWidth(heading.width())
-    assert detail.height() >= detail.heightForWidth(detail.width())
-    assert not heading.geometry().intersects(detail.geometry())
+    assert buttons[text.CALCULATE].isEnabled()
+    assert buttons[text.HISTORY].isEnabled()
+    assert buttons[text.INFO].isEnabled()
+    assert not buttons[text.STATUS].isEnabled()
+    assert not window.refresh_button.isEnabled()
+    assert window.grab().save(str(tmp_path / "main-window-offline-warning.png"))
     window.resize(700, 450)
     qt_app.processEvents()
-    assert heading.height() >= heading.heightForWidth(heading.width())
-    assert detail.height() >= detail.heightForWidth(detail.width())
-    assert not heading.geometry().intersects(detail.geometry())
+    assert window.settings_warning_label.isVisible()
+    assert not window.settings_warning_label.geometry().isEmpty()
     window.close()
 
 
@@ -132,10 +211,7 @@ def test_main_table_cells_cannot_be_selected() -> None:
 
     item = window.table.item(0, 0)
     assert item is not None
-    assert (
-        window.table.selectionMode()
-        is QAbstractItemView.SelectionMode.NoSelection
-    )
+    assert window.table.selectionMode() is QAbstractItemView.SelectionMode.NoSelection
     QTest.mouseClick(
         window.table.viewport(),
         Qt.MouseButton.LeftButton,
@@ -202,9 +278,7 @@ def test_main_window_remains_readable_under_dark_system_palette(tmp_path) -> Non
 
         title = window.findChild(QLabel, "Title")
         assert title is not None and title.isVisible()
-        assert title.palette().color(QPalette.ColorRole.WindowText) == QColor(
-            "#101828"
-        )
+        assert title.palette().color(QPalette.ColorRole.WindowText) == QColor("#101828")
         name_item = window.table.item(0, 0)
         assert name_item is not None
         assert not window.table.visualItemRect(name_item).isEmpty()
@@ -379,8 +453,7 @@ def test_bootstrap_hides_new_unsupported_devices_but_keeps_historical_rows(
     action_widget = window.table.cellWidget(0, 4)
     assert action_widget is not None
     buttons = {
-        button.text(): button
-        for button in action_widget.findChildren(QPushButton)
+        button.text(): button for button in action_widget.findChildren(QPushButton)
     }
     assert buttons[text.CALCULATE].isEnabled()
     assert buttons[text.HISTORY].isEnabled()
@@ -400,9 +473,7 @@ def test_calculation_preparation_runs_off_gui_thread_and_restores_controls() -> 
         worker_threads.append(threading.get_ident())
         return "pregătit"
 
-    window = MainWindow(
-        cached_rows=[representative_row()], settings_configured=True
-    )
+    window = MainWindow(cached_rows=[representative_row()], settings_configured=True)
     window.show()
     window.run_background_operation(
         prepare,
@@ -413,9 +484,7 @@ def test_calculation_preparation_runs_off_gui_thread_and_restores_controls() -> 
     assert window.status_label.text() == text.PREPARING_CALCULATION
 
     deadline = time.monotonic() + 2
-    while (
-        window.active_threads or not payloads
-    ) and time.monotonic() < deadline:
+    while (window.active_threads or not payloads) and time.monotonic() < deadline:
         qt_app.processEvents()
         time.sleep(0.005)
     qt_app.processEvents()
@@ -443,6 +512,14 @@ def test_refresh_runs_async_preserves_rows_and_restores_button() -> None:
     window.show()
     window.refresh_devices()
     assert not window.refresh_button.isEnabled()
+    action_widget = window.table.cellWidget(0, 4)
+    assert action_widget is not None
+    status_button = next(
+        button
+        for button in action_widget.findChildren(QPushButton)
+        if button.text() == text.STATUS
+    )
+    assert not status_button.isEnabled()
     assert window.table.rowCount() == 1
     deadline = time.monotonic() + 2
     while window.active_threads and time.monotonic() < deadline:
@@ -451,6 +528,14 @@ def test_refresh_runs_async_preserves_rows_and_restores_button() -> None:
     qt_app.processEvents()
     assert not window.active_threads
     assert window.refresh_button.isEnabled()
+    refreshed_actions = window.table.cellWidget(0, 4)
+    assert refreshed_actions is not None
+    refreshed_status = next(
+        button
+        for button in refreshed_actions.findChildren(QPushButton)
+        if button.text() == text.STATUS
+    )
+    assert refreshed_status.isEnabled()
     assert window.status_label.text() == text.REFRESH_COMPLETE
     window.close()
 
@@ -565,7 +650,7 @@ def test_database_bootstrap_starts_after_window_creation_and_off_gui_thread(
     calls = []
     gui_thread = threading.get_ident()
 
-    def load_state(database):
+    def load_state(database, cancellation=None):
         calls.append(threading.get_ident())
         return InitialState([], False, None)
 
@@ -633,9 +718,7 @@ def test_configured_startup_refreshes_once_and_displays_fresh_reading() -> None:
             )
         ]
 
-    window = MainWindow(
-        bootstrap_workflow=lambda: InitialState([], True, refresh)
-    )
+    window = MainWindow(bootstrap_workflow=lambda: InitialState([], True, refresh))
     window.show()
     window.load_initial_state()
     deadline = time.monotonic() + 2
@@ -656,7 +739,9 @@ def test_configured_startup_refreshes_once_and_displays_fresh_reading() -> None:
     window.close()
 
 
-def test_verified_settings_save_triggers_one_refresh_but_untested_save_does_not() -> None:
+def test_verified_settings_save_triggers_one_refresh_but_untested_save_does_not() -> (
+    None
+):
     qt_app = app()
     calls = 0
     row = representative_row()
@@ -698,9 +783,7 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
 ) -> None:
     qt_app = app()
     database = Database(tmp_path / "tatatuya.sqlite3")
-    settings = TuyaSettings(
-        "client", "secret", "central_europe", Currency.RON
-    )
+    settings = TuyaSettings("client", "secret", "central_europe", Currency.RON)
     refresh_observations = []
     settings_load_threads = []
     gui_thread = threading.get_ident()
@@ -711,7 +794,13 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
         settings_saved = Signal(object)
 
         def __init__(
-            self, service, regions, parent=None, *, initial_settings=None
+            self,
+            service,
+            regions,
+            parent=None,
+            *,
+            initial_settings=None,
+            worker_owner=None,
         ):
             super().__init__(parent)
             self.service = service
@@ -720,17 +809,17 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
             saved = self.service.save(settings)
             self.settings_saved.emit(SavedSettings(saved, True))
 
-    def initial_state(db):
+    def initial_state(db, cancellation=None):
         db.initialize()
         return InitialState([], False, None)
 
-    def refresh(db, active_settings):
+    def refresh(db, active_settings, cancellation=None):
         with db.connect() as connection:
             persisted = SettingsRepository(connection).load_tuya()
         refresh_observations.append((active_settings, persisted))
         return [DeviceRefreshResult(row.device, row.latest_reading, row.latest_reading)]
 
-    def prepare_settings(db):
+    def prepare_settings(db, cancellation=None):
         settings_load_threads.append(threading.get_ident())
         return _prepare_settings(db)
 
@@ -808,8 +897,7 @@ def test_failed_bootstrap_shows_local_error_and_retry_recovers() -> None:
         time.sleep(0.005)
     qt_app.processEvents()
     while (
-        window.status_label.text() != text.REFRESH_COMPLETE
-        or window.active_threads
+        window.status_label.text() != text.REFRESH_COMPLETE or window.active_threads
     ) and time.monotonic() < deadline:
         qt_app.processEvents()
         time.sleep(0.005)

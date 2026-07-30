@@ -21,6 +21,45 @@ QFrame#FieldPanel {
     border-radius: 8px;
 }
 
+QFrame#CloudImportCard {
+    background: #f5f9ff;
+    border: 1px solid #bfd3f8;
+    border-radius: 8px;
+}
+
+QLabel#CloudImportTitle {
+    color: #1d2939;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#CloudImportHelp {
+    color: #475467;
+    font-size: 13px;
+}
+
+QLabel#CloudImportStatus {
+    color: #344054;
+    font-size: 13px;
+}
+
+QLabel#CloudImportStatus[state="loading"] {
+    color: #175cd3;
+}
+
+QLabel#CloudImportStatus[state="success"] {
+    color: #067647;
+}
+
+QLabel#CloudImportStatus[state="empty"],
+QLabel#CloudImportStatus[state="unavailable"] {
+    color: #475467;
+}
+
+QLabel#CloudImportStatus[state="error"] {
+    color: #b42318;
+}
+
 QLabel#SummaryPrimary {
     color: #1f2937;
     font-size: 14px;
@@ -419,4 +458,15 @@ QLabel#CalculationTotal {
 QLabel#CalculationFeedback {
     color: #667085;
     font-size: 12px;
+}
+
+QFrame#SettingsWarning {
+    background: #fff8e8;
+    border: 1px solid #f0d391;
+    border-radius: 8px;
+}
+
+QFrame#SettingsWarning QLabel {
+    color: #8a5700;
+    font-size: 13px;
 }

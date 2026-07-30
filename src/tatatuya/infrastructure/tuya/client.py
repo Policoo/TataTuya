@@ -11,7 +11,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from tatatuya.domain.models import Device, DeviceStatus, EnergySpecification, TuyaSettings
+from tatatuya.domain.cancellation import CancellationContext
+from tatatuya.domain.energy import DecimalExpansionError, canonical_decimal
+from tatatuya.domain.models import (
+    Device,
+    DeviceStatus,
+    EnergySpecification,
+    TuyaSettings,
+)
 from tatatuya.infrastructure.tuya.parsers import (
     parse_batch_status,
     parse_device_page,
@@ -19,7 +26,11 @@ from tatatuya.infrastructure.tuya.parsers import (
     parse_individual_status,
     redact_sensitive_fields,
 )
-from tatatuya.infrastructure.tuya.signing import RequestSigner, canonical_path, json_bytes
+from tatatuya.infrastructure.tuya.signing import (
+    RequestSigner,
+    canonical_path,
+    json_bytes,
+)
 
 
 REGION_BASE_URLS = {
@@ -57,6 +68,23 @@ class PreparedRequest:
     headers: Mapping[str, str]
     body: bytes
     diagnostic: Mapping[str, Any]
+    timeout_seconds: float = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class BodyLimits:
+    raw_bytes: int
+    decoded_characters: int
+    error_raw_bytes: int = 65_536
+    error_decoded_characters: int = 65_536
+    decimal_integers: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class BoundedPayload:
+    payload: Mapping[str, Any]
+    raw_bytes: int
+    decoded_characters: int
 
 
 class Transport(Protocol):
@@ -68,29 +96,58 @@ class UrllibTransport:
         self.timeout_seconds = timeout_seconds
 
     def send(self, request: PreparedRequest) -> Mapping[str, Any]:
+        return self.send_bounded(
+            request,
+            BodyLimits(1_048_576, 1_048_576),
+        ).payload
+
+    def send_bounded(
+        self, request: PreparedRequest, limits: BodyLimits
+    ) -> BoundedPayload:
+        headers = dict(request.headers)
+        headers["Accept-Encoding"] = "identity"
         raw_request = Request(
             request.url,
             data=request.body or None,
-            headers=dict(request.headers),
+            headers=headers,
             method=request.method,
         )
         try:
-            with urlopen(raw_request, timeout=self.timeout_seconds) as response:
-                raw = response.read().decode("utf-8")
+            with urlopen(
+                raw_request,
+                timeout=min(self.timeout_seconds, request.timeout_seconds),
+            ) as response:
+                _validate_identity_encoding(response)
+                _validate_declared_length(response, limits.raw_bytes)
+                raw_body = _read_bounded(response, limits.raw_bytes)
         except HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
             try:
-                diagnostic_body = _parse_json(details)
-            except json.JSONDecodeError:
-                # Opaque bodies can contain credentials with no discoverable key name.
-                diagnostic_body = {
-                    "body_format": "non-json",
-                    "body_length": len(details),
-                }
+                _validate_identity_encoding(exc)
+                _validate_declared_length(exc, limits.error_raw_bytes)
+                error_body = _read_bounded(exc, limits.error_raw_bytes)
+                details = error_body.decode("utf-8", errors="strict")
+                if len(details) > limits.error_decoded_characters:
+                    raise ResponseLimitError("Tuya error response is too large")
+            except (ResponseLimitError, UnicodeDecodeError):
+                diagnostic_body = {"body_format": "discarded"}
+            else:
+                try:
+                    diagnostic_body = _parse_json(details)
+                except json.JSONDecodeError:
+                    # Opaque bodies can contain credentials with no discoverable key name.
+                    diagnostic_body = {
+                        "body_format": "non-json",
+                        "body_length": len(details),
+                    }
             raise TuyaAPIError(
                 f"Tuya HTTP error {exc.code}",
                 request_info=request.diagnostic,
                 response_payload=diagnostic_body,
+            ) from exc
+        except ResponseLimitError as exc:
+            raise TuyaAPIError(
+                "Tuya response is too large",
+                request_info=request.diagnostic,
             ) from exc
         except URLError as exc:
             raise TuyaAPIError(
@@ -98,7 +155,19 @@ class UrllibTransport:
                 request_info=request.diagnostic,
             ) from exc
         try:
-            payload = _parse_json(raw)
+            decoded = raw_body.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise TuyaAPIError(
+                "Tuya returned invalid UTF-8",
+                request_info=request.diagnostic,
+            ) from exc
+        if len(decoded) > limits.decoded_characters:
+            raise TuyaAPIError(
+                "Tuya response is too large",
+                request_info=request.diagnostic,
+            )
+        try:
+            payload = _parse_json(decoded, decimal_integers=limits.decimal_integers)
         except json.JSONDecodeError as exc:
             raise TuyaAPIError(
                 "Tuya returned an invalid response",
@@ -109,7 +178,11 @@ class UrllibTransport:
                 "Tuya returned an invalid response",
                 request_info=request.diagnostic,
             )
-        return payload
+        return BoundedPayload(payload, len(raw_body), len(decoded))
+
+
+class ResponseLimitError(RuntimeError):
+    pass
 
 
 class TuyaClient:
@@ -121,6 +194,7 @@ class TuyaClient:
         *,
         transport: Transport | None = None,
         clock_ms: Callable[[], str] | None = None,
+        cancellation: CancellationContext | None = None,
     ) -> None:
         if not settings.is_complete:
             raise TuyaConfigError("Tuya settings are incomplete")
@@ -129,8 +203,9 @@ class TuyaClient:
         except KeyError as exc:
             raise TuyaConfigError(f"Unknown Tuya region: {settings.region}") from exc
         self.settings = settings
-        self.transport = transport or UrllibTransport()
+        self.transport = transport or UrllibTransport(5)
         self.clock_ms = clock_ms or (lambda: str(time.time_ns() // 1_000_000))
+        self.cancellation = cancellation
         self.signer = RequestSigner(settings.client_id, settings.client_secret)
         self.access_token: str | None = None
 
@@ -148,9 +223,7 @@ class TuyaClient:
         seen_cursors: set[str] = set()
         while True:
             page = parse_device_page(
-                self._request(
-                    "GET", "/v1.0/iot-01/associated-users/devices", query
-                )
+                self._request("GET", "/v1.0/iot-01/associated-users/devices", query)
             )
             for device in page.devices:
                 devices.setdefault(device.device_id, device)
@@ -158,9 +231,7 @@ class TuyaClient:
                 return list(devices.values())
             cursor = page.last_row_key
             if cursor is None or cursor in seen_cursors:
-                raise TuyaAPIError(
-                    "Tuya returned invalid device pagination metadata"
-                )
+                raise TuyaAPIError("Tuya returned invalid device pagination metadata")
             seen_cursors.add(cursor)
             query["last_row_key"] = cursor
 
@@ -188,6 +259,51 @@ class TuyaClient:
             statuses.update(parse_batch_status(result))
         return statuses
 
+    def get_report_log_page(
+        self,
+        device_id: str,
+        code: str,
+        start_time_ms: int,
+        end_time_ms: int,
+        *,
+        last_row_key: str | None,
+        size: int,
+        raw_allowance: int,
+        decoded_allowance: int,
+    ) -> BoundedPayload:
+        """Fetch one exact-decimal report-log page under caller budgets."""
+
+        encoded_id = quote(device_id, safe="")
+        params: dict[str, Any] = {
+            "codes": code,
+            "start_time": start_time_ms,
+            "end_time": end_time_ms,
+            "size": size,
+        }
+        if last_row_key:
+            params["last_row_key"] = last_row_key
+        prepared = self._prepare_request(
+            "GET", f"/v2.1/cloud/thing/{encoded_id}/report-logs", params
+        )
+        send_bounded = getattr(self.transport, "send_bounded", None)
+        if send_bounded is None:
+            raise TuyaAPIError("Tuya transport does not support bounded responses")
+        try:
+            envelope = send_bounded(
+                prepared,
+                BodyLimits(
+                    min(1_048_576, raw_allowance),
+                    min(1_048_576, decoded_allowance),
+                    decimal_integers=True,
+                ),
+            )
+        except TuyaAPIError as exc:
+            raise self._redacted_error(exc) from exc
+        result = self._extract_result(envelope.payload, prepared.diagnostic)
+        if not isinstance(result, Mapping):
+            raise TuyaAPIError("Tuya returned an invalid report-log page")
+        return BoundedPayload(result, envelope.raw_bytes, envelope.decoded_characters)
+
     def _request(
         self,
         method: str,
@@ -197,8 +313,30 @@ class TuyaClient:
         *,
         use_token: bool = True,
     ) -> Any:
+        prepared = self._prepare_request(
+            method, path, params, body, use_token=use_token
+        )
+        try:
+            payload = self.transport.send(prepared)
+        except TuyaAPIError as exc:
+            raise self._redacted_error(exc) from exc
+        return self._extract_result(payload, prepared.diagnostic)
+
+    def _prepare_request(
+        self,
+        method: str,
+        path: str,
+        params: Mapping[str, Any] | None = None,
+        body: Any | None = None,
+        *,
+        use_token: bool = True,
+    ) -> PreparedRequest:
+        if self.cancellation is not None:
+            self.cancellation.checkpoint()
         if use_token and not self.access_token:
             self.authenticate()
+            if self.cancellation is not None:
+                self.cancellation.checkpoint()
         timestamp = self.clock_ms()
         request_path = canonical_path(path, params)
         body_data = json_bytes(body)
@@ -220,21 +358,29 @@ class TuyaClient:
             "region": self.settings.region,
             "uses_access_token": bool(token),
         }
-        prepared = PreparedRequest(
-            method.upper(), self.base_url + request_path, headers, body_data, diagnostic
+        timeout_seconds = 5.0
+        if self.cancellation is not None:
+            timeout_seconds = self.cancellation.remote_timeout_seconds()
+            if timeout_seconds <= 0:
+                self.cancellation.checkpoint()
+                raise TuyaAPIError("Tuya request deadline is exhausted")
+        return PreparedRequest(
+            method.upper(),
+            self.base_url + request_path,
+            headers,
+            body_data,
+            diagnostic,
+            timeout_seconds,
         )
-        try:
-            payload = self.transport.send(prepared)
-        except TuyaAPIError as exc:
-            secrets = self._secrets()
-            raise TuyaAPIError(
-                _redact(str(exc), secrets),
-                request_info=_redact_payload(exc.request_info, secrets),
-                response_payload=_redact_payload(exc.response_payload, secrets),
-            ) from exc
+
+    def _extract_result(
+        self, payload: Mapping[str, Any], diagnostic: Mapping[str, Any]
+    ) -> Any:
         if payload.get("success") is False:
             code = payload.get("code", "unknown")
-            message = _redact(str(payload.get("msg", "Tuya request failed")), self._secrets())
+            message = _redact(
+                str(payload.get("msg", "Tuya request failed")), self._secrets()
+            )
             raise TuyaAPIError(
                 f"Tuya error {code}: {message}",
                 request_info=diagnostic,
@@ -247,6 +393,14 @@ class TuyaClient:
                 response_payload=_redact_payload(payload, self._secrets()),
             )
         return payload["result"]
+
+    def _redacted_error(self, exc: TuyaAPIError) -> TuyaAPIError:
+        secrets = self._secrets()
+        return TuyaAPIError(
+            _redact(str(exc), secrets),
+            request_info=_redact_payload(exc.request_info, secrets),
+            response_payload=_redact_payload(exc.response_payload, secrets),
+        )
 
     def _secrets(self) -> tuple[str, ...]:
         return tuple(
@@ -274,9 +428,59 @@ def _redact_payload(value: Any, secrets: Sequence[str]) -> Any:
     if isinstance(value, list):
         return [_redact_payload(item, secrets) for item in value]
     if isinstance(value, Decimal):
-        return format(value, "f")
+        try:
+            return canonical_decimal(value)
+        except (DecimalExpansionError, ValueError):
+            return "[DECIMAL_DISCARDED]"
     return value
 
 
-def _parse_json(raw: str) -> Any:
-    return json.loads(raw, parse_float=Decimal)
+def _parse_json(raw: str, *, decimal_integers: bool = False) -> Any:
+    return json.loads(
+        raw,
+        parse_float=Decimal,
+        parse_int=Decimal if decimal_integers else int,
+    )
+
+
+def _validate_identity_encoding(response: Any) -> None:
+    headers = getattr(response, "headers", None)
+    encoding = headers.get("Content-Encoding") if headers is not None else None
+    if encoding and str(encoding).strip().lower() != "identity":
+        raise TuyaAPIError("Tuya returned an unsupported content encoding")
+
+
+def _validate_declared_length(response: Any, allowance: int) -> None:
+    headers = getattr(response, "headers", None)
+    value = headers.get("Content-Length") if headers is not None else None
+    if value is None:
+        return
+    try:
+        length = int(value)
+    except (TypeError, ValueError) as exc:
+        raise TuyaAPIError("Tuya returned an invalid content length") from exc
+    if length < 0 or length > allowance:
+        raise ResponseLimitError("Tuya response is too large")
+
+
+def _read_bounded(stream: Any, allowance: int) -> bytes:
+    if allowance < 0:
+        raise ResponseLimitError("Tuya response budget is exhausted")
+    chunks: list[bytes] = []
+    remaining = allowance + 1
+    while remaining > 0:
+        size = min(65_536, remaining)
+        try:
+            chunk = stream.read(size)
+        except TypeError as exc:
+            raise ResponseLimitError(
+                "Tuya response stream does not support bounded reads"
+            ) from exc
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    body = b"".join(chunks)
+    if len(body) > allowance:
+        raise ResponseLimitError("Tuya response is too large")
+    return body

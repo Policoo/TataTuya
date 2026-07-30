@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Callable
 
+from tatatuya.domain.energy import MAX_ENERGY_SCALE
 from tatatuya.domain.errors import (
     EnergySpecificationError,
     UnsupportedEnergyDeviceError,
@@ -112,5 +113,5 @@ def _has_complete_specification(device: Device) -> bool:
         and bool(device.energy_unit)
         and isinstance(device.energy_scale, int)
         and not isinstance(device.energy_scale, bool)
-        and device.energy_scale >= 0
+        and 0 <= device.energy_scale <= MAX_ENERGY_SCALE
     )

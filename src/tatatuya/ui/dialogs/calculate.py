@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
+import inspect
 
-from PySide6.QtCore import QSignalBlocker, QThread, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, QTimer, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QApplication,
     QDialog,
     QFormLayout,
     QFrame,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Calculation, Device, Reading
 from tatatuya.services.billing_service import BillingService, CalculationContext
+from tatatuya.domain.cancellation import CancellationContext
 from tatatuya.ui import text
 from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.formatters import (
@@ -33,26 +35,46 @@ from tatatuya.ui.formatters import (
     format_money,
     format_reading_option,
 )
-from tatatuya.ui.workers import WorkflowThread
+from tatatuya.ui.workers import WorkerOwner, WorkflowThread
+
+
+@dataclass(frozen=True, slots=True)
+class CloudImportPayload:
+    context: CalculationContext
+    new_count: int
+    reused_count: int
 
 
 class CalculationDialog(QDialog):
     calculation_saved = Signal(object)
     error_raised = Signal(object)
+    settings_requested = Signal()
 
     def __init__(
         self,
         device: Device,
         context: CalculationContext,
-        save_workflow: Callable[[int, int, str], Calculation],
+        save_workflow: Callable[..., Calculation],
         parent: QWidget | None = None,
+        *,
+        cloud_import_workflow: Callable[..., CloudImportPayload] | None = None,
+        cloud_unavailable_text: str | None = None,
+        cloud_settings_available: bool = False,
+        worker_owner: WorkerOwner | None = None,
     ) -> None:
         super().__init__(parent)
         self.device = device
         self.context = context
         self.save_workflow = save_workflow
+        self.cloud_import_workflow = cloud_import_workflow
+        self.cloud_unavailable_text = cloud_unavailable_text
+        self.cloud_settings_available = cloud_settings_available
+        self.worker_owner = worker_owner
         self.active_thread: WorkflowThread | None = None
         self._saved_result: Calculation | None = None
+        self._cloud_result: CloudImportPayload | None = None
+        self._active_operation: str | None = None
+        self._detached = False
         self._close_when_idle = False
         self._readings = {
             reading.id: reading for reading in context.readings if reading.id is not None
@@ -62,14 +84,12 @@ class CalculationDialog(QDialog):
         )
         self.setWindowTitle(text.CALCULATION_TITLE)
         self.setModal(True)
-        self.resize(720, 620)
         self._build_ui()
         self._populate_readings()
         self._connect_signals()
         self._update_preview()
-        application = QApplication.instance()
-        if application is not None:
-            application.aboutToQuit.connect(self.shutdown_worker)
+        preferred = self.sizeHint()
+        self.resize(max(720, preferred.width()), preferred.height())
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -120,6 +140,47 @@ class CalculationDialog(QDialog):
         selection.addWidget(self.price, 3, 1, 1, 2)
         layout.addWidget(selection_panel)
 
+        self.cloud_panel = QFrame()
+        self.cloud_panel.setObjectName("CloudImportCard")
+        cloud_layout = QVBoxLayout(self.cloud_panel)
+        cloud_layout.setContentsMargins(18, 16, 18, 16)
+        cloud_layout.setSpacing(8)
+        self.cloud_title = QLabel(text.CLOUD_IMPORT_TITLE)
+        self.cloud_title.setObjectName("CloudImportTitle")
+        self.cloud_help = QLabel(text.CLOUD_IMPORT_HELP)
+        self.cloud_help.setObjectName("CloudImportHelp")
+        self.cloud_help.setWordWrap(True)
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+        self.cloud_import_button = QPushButton(text.CLOUD_IMPORT_RECENT)
+        self.cloud_import_button.setObjectName("SecondaryButton")
+        self.cloud_import_button.clicked.connect(self.import_cloud)
+        self.cloud_import_button.setVisible(self.cloud_import_workflow is not None)
+        self.cloud_settings_button = QPushButton(text.CLOUD_OPEN_SETTINGS)
+        self.cloud_settings_button.setObjectName("SecondaryButton")
+        self.cloud_settings_button.setVisible(self.cloud_settings_available)
+        self.cloud_settings_button.clicked.connect(self.settings_requested.emit)
+        actions.addWidget(self.cloud_import_button)
+        actions.addWidget(self.cloud_settings_button)
+        actions.addStretch()
+        self.cloud_feedback = QLabel()
+        self.cloud_feedback.setObjectName("CloudImportStatus")
+        self.cloud_feedback.setWordWrap(True)
+        cloud_layout.addWidget(self.cloud_title)
+        cloud_layout.addWidget(self.cloud_help)
+        cloud_layout.addLayout(actions)
+        cloud_layout.addWidget(self.cloud_feedback)
+        layout.addWidget(self.cloud_panel)
+        if self.cloud_import_workflow is not None:
+            self._set_cloud_status(text.CLOUD_IMPORT_READY, "ready")
+        elif self.cloud_settings_available:
+            self._set_cloud_status(text.CLOUD_IMPORT_NEEDS_SETTINGS, "unavailable")
+        else:
+            self._set_cloud_status(
+                self.cloud_unavailable_text or text.CLOUD_IMPORT_NOT_AVAILABLE,
+                "unavailable",
+            )
+
         result_panel = QFrame()
         result_panel.setObjectName("CalculationResult")
         result = QFormLayout(result_panel)
@@ -146,12 +207,12 @@ class CalculationDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch()
-        close = QPushButton(text.CLOSE)
-        close.setObjectName("SecondaryButton")
-        close.clicked.connect(self.reject)
+        self.close_button = QPushButton(text.CLOSE)
+        self.close_button.setObjectName("SecondaryButton")
+        self.close_button.clicked.connect(self.reject)
         self.save_button = QPushButton(text.SAVE_CALCULATION)
         self.save_button.clicked.connect(self.save)
-        buttons.addWidget(close)
+        buttons.addWidget(self.close_button)
         buttons.addWidget(self.save_button)
         layout.addLayout(buttons)
 
@@ -168,13 +229,38 @@ class CalculationDialog(QDialog):
         return label
 
     def _populate_readings(self) -> None:
+        self.start_date.clear()
+        self.end_date.clear()
         for date_key, readings in self._readings_by_date.items():
             label = format_local_date(readings[0].recorded_at_utc)
             self.start_date.addItem(label, date_key)
             self.end_date.addItem(label, date_key)
+        if self.start_date.count():
+            longest_date = max(
+                self.start_date.itemText(index)
+                for index in range(self.start_date.count())
+            )
+            date_width = max(
+                self.start_date.sizeHint().width(),
+                self.end_date.sizeHint().width(),
+                self.start_date.fontMetrics().horizontalAdvance(longest_date) + 80,
+            )
+            self.start_date.setMinimumWidth(date_width)
+            self.end_date.setMinimumWidth(date_width)
 
-        start = self._readings[self.context.default_start_reading_id]
-        end = self._readings[self.context.default_end_reading_id]
+        if len(self._readings) < 2:
+            self.feedback.setText(text.INSUFFICIENT_READINGS)
+            self.save_button.setEnabled(False)
+            return
+
+        start_id = self.context.default_start_reading_id
+        end_id = self.context.default_end_reading_id
+        start = self._readings.get(start_id) if start_id is not None else None
+        end = self._readings.get(end_id) if end_id is not None else None
+        if start is None or end is None:
+            self.feedback.setText(text.INSUFFICIENT_READINGS)
+            self.save_button.setEnabled(False)
+            return
         self.start_date.setCurrentIndex(
             self.start_date.findData(self._local_date_key(start.recorded_at_utc))
         )
@@ -282,7 +368,14 @@ class CalculationDialog(QDialog):
         start = self._selected(self.start_reading)
         end = self._selected(self.end_reading)
         if start is None or end is None:
+            self.start_value.setText("—")
+            self.end_value.setText("—")
+            self.consumption_value.setText("—")
+            self.total_value.setText("—")
+            self.feedback.setText(text.INSUFFICIENT_READINGS)
+            self.save_button.setEnabled(False)
             return
+        self.save_button.setEnabled(self.active_thread is None)
         self.start_value.setText(format_energy(start.value_kwh))
         self.end_value.setText(format_energy(end.value_kwh))
         self.currency_value.setText(self.context.currency.value)
@@ -317,10 +410,16 @@ class CalculationDialog(QDialog):
         entered_price = self.price.text()
         self._set_saving(True)
         self.feedback.setText(text.SAVING_CALCULATION)
+        self._active_operation = "save"
         thread = WorkflowThread(
-            lambda: self.save_workflow(start_id, end_id, entered_price)
+            lambda context: self._call_save(
+                start_id, end_id, entered_price, context
+            ),
+            timeout_seconds=15,
         )
         self.active_thread = thread
+        if self.worker_owner is not None:
+            self.worker_owner.track(thread)
         thread.succeeded.connect(self._save_succeeded)
         thread.failed.connect(self._save_failed)
         thread.finished.connect(thread.deleteLater)
@@ -328,16 +427,51 @@ class CalculationDialog(QDialog):
         thread.start()
 
     def _save_succeeded(self, saved: object) -> None:
-        if isinstance(saved, Calculation):
+        if self._detached:
+            return
+        if self._active_operation == "save" and isinstance(saved, Calculation):
             self._saved_result = saved
+        elif self._active_operation == "cloud" and isinstance(saved, CloudImportPayload):
+            self._cloud_result = saved
 
     def _save_failed(self, error: UserFacingError) -> None:
+        if self._detached:
+            return
+        if self._active_operation == "cloud":
+            self._cloud_result = None
+            self._set_cloud_status(_cloud_failure_text(error), "error")
         self.error_raised.emit(error)
 
     def _save_finished(self, thread: WorkflowThread) -> None:
         if self.active_thread is thread:
             self.active_thread = None
+        if self._detached:
+            return
         self._set_saving(False)
+        operation = self._active_operation
+        self._active_operation = None
+        if operation == "cloud" and self._cloud_result is not None:
+            result = self._cloud_result
+            self._cloud_result = None
+            self.context = result.context
+            self._readings = {
+                reading.id: reading
+                for reading in self.context.readings
+                if reading.id is not None
+            }
+            self._readings_by_date = self._group_readings_by_local_date(
+                tuple(self._readings.values())
+            )
+            self._populate_readings()
+            if result.new_count == 0 and result.reused_count == 0:
+                self._set_cloud_status(text.CLOUD_IMPORT_EMPTY, "empty")
+            else:
+                self._set_cloud_status(
+                    text.CLOUD_IMPORT_RESULT.format(
+                        new=result.new_count, existing=result.reused_count
+                    ),
+                    "success",
+                )
         self._update_preview()
         if self._saved_result is not None:
             saved = self._saved_result
@@ -354,9 +488,57 @@ class CalculationDialog(QDialog):
         self.end_reading.setEnabled(not saving)
         self.price.setEnabled(not saving)
         self.save_button.setEnabled(not saving)
+        self.cloud_import_button.setEnabled(
+            not saving and self.cloud_import_workflow is not None
+        )
+        self.cloud_settings_button.setEnabled(not saving)
+
+    def import_cloud(self) -> None:
+        if self.active_thread is not None or self.cloud_import_workflow is None:
+            return
+        workflow = self.cloud_import_workflow
+        self._set_saving(True)
+        self._active_operation = "cloud"
+        self._cloud_result = None
+        self._set_cloud_status(text.CLOUD_IMPORTING, "loading")
+        thread = WorkflowThread(
+            lambda context: workflow(context),
+            timeout_seconds=30,
+        )
+        self.active_thread = thread
+        if self.worker_owner is not None:
+            self.worker_owner.track(thread)
+        thread.succeeded.connect(self._save_succeeded)
+        thread.failed.connect(self._save_failed)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._save_finished(thread))
+        thread.start()
+
+    def _set_cloud_status(self, message: str, state: str) -> None:
+        self.cloud_feedback.setText(message)
+        self.cloud_feedback.setProperty("state", state)
+        self.cloud_feedback.style().unpolish(self.cloud_feedback)
+        self.cloud_feedback.style().polish(self.cloud_feedback)
+
+    def _call_save(
+        self,
+        start_id: int,
+        end_id: int,
+        entered_price: str,
+        context: CancellationContext,
+    ) -> Calculation:
+        parameters = inspect.signature(self.save_workflow).parameters
+        if len(parameters) >= 4:
+            return self.save_workflow(start_id, end_id, entered_price, context)
+        return self.save_workflow(start_id, end_id, entered_price)
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         if self.active_thread is not None:
+            if self._active_operation == "cloud" and self.worker_owner is not None:
+                self._detached = True
+                self.active_thread.requestInterruption()
+                event.accept()
+                return
             self._close_when_idle = True
             self.active_thread.requestInterruption()
             event.ignore()
@@ -365,16 +547,24 @@ class CalculationDialog(QDialog):
 
     def reject(self) -> None:
         if self.active_thread is not None:
+            if self._active_operation == "cloud" and self.worker_owner is not None:
+                self._detached = True
+                self.active_thread.requestInterruption()
+                super().reject()
+                return
             self._close_when_idle = True
             self.active_thread.requestInterruption()
             return
         super().reject()
 
-    def shutdown_worker(self) -> None:
-        thread = self.active_thread
-        if thread is None:
-            return
-        thread.requestInterruption()
-        if thread is not QThread.currentThread():
-            thread.wait()
-        self.active_thread = None
+
+def _cloud_failure_text(error: UserFacingError) -> str:
+    if error.title == "Tuya este ocupat":
+        return text.CLOUD_IMPORT_RATE_LIMITED
+    if error.title == "Prea multe date Tuya":
+        return text.CLOUD_IMPORT_RESPONSE_LIMIT
+    if error.title == "Istoric Tuya indisponibil":
+        return text.CLOUD_IMPORT_PERMISSION_UNAVAILABLE
+    if error.title == "Operațiune anulată":
+        return text.CLOUD_IMPORT_CANCELLED
+    return text.CLOUD_IMPORT_FAILED

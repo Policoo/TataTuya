@@ -83,6 +83,7 @@ class HistoryDialog(QDialog):
                 text.RAW_VALUE,
                 text.SCALE_AND_UNIT,
                 text.SOURCE,
+                text.CLOUD_DETAILS,
             ]
         )
         self.readings_empty = self._empty_label(text.NO_READING_HISTORY)
@@ -157,6 +158,7 @@ class HistoryDialog(QDialog):
                 reading.raw_value,
                 f"{reading.scale} · {reading.source_unit}",
                 source_label(reading.source),
+                cloud_details(reading),
             )
             for column, value in enumerate(values):
                 self.readings_table.setItem(row, column, QTableWidgetItem(value))
@@ -244,5 +246,26 @@ def source_label(source: str) -> str:
     labels = {
         "batch": text.SOURCE_BATCH,
         "status": text.SOURCE_INDIVIDUAL,
+        "cloud_daily": text.SOURCE_CLOUD_DAILY,
     }
     return labels.get(source, source)
+
+
+def cloud_details(reading: Reading) -> str:
+    if reading.source != "cloud_daily":
+        return "—"
+    imported = (
+        format_local_datetime(reading.imported_at_utc)
+        if reading.imported_at_utc is not None
+        else text.NOT_AVAILABLE
+    )
+    return text.CLOUD_READING_DETAILS.format(
+        imported=imported,
+        day=(
+            reading.cloud_day_local_date.strftime("%d.%m.%Y")
+            if reading.cloud_day_local_date is not None
+            else text.NOT_AVAILABLE
+        ),
+        timezone=reading.cloud_day_timezone or text.NOT_AVAILABLE,
+        offset=reading.cloud_day_utc_offset or text.NOT_AVAILABLE,
+    )

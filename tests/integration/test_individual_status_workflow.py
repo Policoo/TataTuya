@@ -19,7 +19,7 @@ from tatatuya.ui.app import _capture_status
 
 
 class Gateway:
-    def __init__(self, settings: TuyaSettings) -> None:
+    def __init__(self, settings: TuyaSettings, **kwargs) -> None:
         self.settings = settings
 
     def get_device_status(self, device_id: str) -> DeviceStatus:

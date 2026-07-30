@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -16,6 +17,17 @@ from tatatuya.domain.models import (
     Reading,
     TuyaSettings,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class CloudReportEvent:
+    """Transport-neutral event delivered to the cloud-history workflow."""
+
+    device_id: str
+    code: str
+    event_time_ms: int
+    raw_value: Decimal
+    raw_json: str
 
 
 class TuyaGateway(Protocol):
@@ -39,6 +51,13 @@ class DeviceStore(Protocol):
 
 class ReadingStore(Protocol):
     def add(self, reading: Reading) -> Reading: ...
+    def prepare_capture_phase(self) -> None: ...
+    def add_all(
+        self,
+        readings: tuple[Reading, ...],
+        *,
+        busy_timeout_seconds: float,
+    ) -> tuple[Reading, ...]: ...
     def get(self, reading_id: int) -> Reading | None: ...
     def list_for_device(self, device_id: str) -> list[Reading]: ...
     def latest_for_device(self, device_id: str) -> Reading | None: ...

@@ -137,11 +137,14 @@ def test_prepare_only_exposes_price_for_matching_currency() -> None:
     assert billing.prepare("meter-1", Currency.EUR).remembered_unit_price is None
 
 
-def test_prepare_rejects_fewer_than_two_readings() -> None:
+def test_prepare_allows_one_reading_for_in_dialog_import_state() -> None:
     billing, _, _ = service([reading(1, "100", 0)])
 
-    with pytest.raises(UserFacingError, match="cel puțin două"):
-        billing.prepare("meter-1", Currency.RON)
+    context = billing.prepare("meter-1", Currency.RON)
+
+    assert len(context.readings) == 1
+    assert context.default_start_reading_id == 1
+    assert context.default_end_reading_id == 1
 
 
 def test_save_uses_fallback_and_persists_calculation_and_preference() -> None:

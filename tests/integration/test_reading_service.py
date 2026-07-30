@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -28,6 +29,7 @@ from tatatuya.infrastructure.tuya.parsers import (
     parse_energy_specification,
 )
 from tatatuya.services.device_service import DeviceService
+from tatatuya.services.cancellation import CancellationContext
 from tatatuya.services.ports import TuyaGateway
 from tatatuya.services.reading_service import ReadingService
 
@@ -57,9 +59,7 @@ class FakeGateway:
     def get_device_specification(self, device_id: str):
         self.specification_calls.append(device_id)
         if device_id in self.unsupported:
-            raise UnsupportedEnergyDeviceError(
-                "no cumulative energy", '{"status":[]}'
-            )
+            raise UnsupportedEnergyDeviceError("no cumulative energy", '{"status":[]}')
         if device_id in self.invalid_specifications:
             raise EnergySpecificationError(
                 "invalid specification", '{"status":"invalid"}'
@@ -104,6 +104,26 @@ def services(tmp_path, gateway: TuyaGateway):
     return connection_context, devices, readings, reading_service
 
 
+class CountingReadingStore:
+    def __init__(self, repository: ReadingRepository) -> None:
+        self.repository = repository
+        self.capture_sizes: list[int] = []
+        self.capture_timeouts: list[float] = []
+
+    def prepare_capture_phase(self):
+        self.repository.prepare_capture_phase()
+
+    def add_all(self, readings, *, busy_timeout_seconds):
+        self.capture_sizes.append(len(readings))
+        self.capture_timeouts.append(busy_timeout_seconds)
+        return self.repository.add_all(
+            readings, busy_timeout_seconds=busy_timeout_seconds
+        )
+
+    def latest_for_device(self, device_id):
+        return self.repository.latest_for_device(device_id)
+
+
 @pytest.mark.parametrize("payload", [{}, {"devices": "not-a-list"}])
 def test_malformed_discovery_does_not_mark_cached_meter_absent(
     tmp_path, payload
@@ -135,7 +155,9 @@ def test_malformed_discovery_does_not_mark_cached_meter_absent(
 
 
 def test_refresh_chunks_21_devices_and_preserves_successful_batch(tmp_path) -> None:
-    gateway = FakeGateway([Device(f"meter-{index}", f"Contor {index}") for index in range(21)])
+    gateway = FakeGateway(
+        [Device(f"meter-{index}", f"Contor {index}") for index in range(21)]
+    )
     gateway.failed_batches.add(1)
     context, _, readings, service = services(tmp_path, gateway)
     try:
@@ -164,7 +186,9 @@ def test_equal_refresh_values_create_distinct_readings(tmp_path) -> None:
         context.__exit__(None, None, None)
 
 
-def test_partial_response_keeps_latest_saved_reading_for_offline_device(tmp_path) -> None:
+def test_partial_response_keeps_latest_saved_reading_for_offline_device(
+    tmp_path,
+) -> None:
     gateway = FakeGateway([Device("online", "Online"), Device("offline", "Offline")])
     context, _, readings, service = services(tmp_path, gateway)
     try:
@@ -173,13 +197,17 @@ def test_partial_response_keeps_latest_saved_reading_for_offline_device(tmp_path
         results = {item.device.device_id: item for item in service.refresh()}
         assert results["online"].succeeded
         assert not results["offline"].succeeded
-        assert results["offline"].latest_reading == readings.latest_for_device("offline")
+        assert results["offline"].latest_reading == readings.latest_for_device(
+            "offline"
+        )
         assert len(readings.list_for_device("offline")) == 1
     finally:
         context.__exit__(None, None, None)
 
 
-def test_missing_energy_is_reported_and_refreshes_cached_specification(tmp_path) -> None:
+def test_missing_energy_is_reported_and_refreshes_cached_specification(
+    tmp_path,
+) -> None:
     remote = Device("meter-1", "Casa", product_id="product")
     gateway = FakeGateway([remote])
     gateway.values["meter-1"] = None
@@ -187,8 +215,12 @@ def test_missing_energy_is_reported_and_refreshes_cached_specification(tmp_path)
     try:
         devices.upsert(
             Device(
-                "meter-1", "Casa", product_id="product",
-                energy_code="forward_energy_total", energy_unit="kWh", energy_scale=2,
+                "meter-1",
+                "Casa",
+                product_id="product",
+                energy_code="forward_energy_total",
+                energy_unit="kWh",
+                energy_scale=2,
             ),
             NOW,
         )
@@ -209,13 +241,234 @@ def test_individual_status_stores_every_usable_energy_result(tmp_path) -> None:
         second = service.capture_individual_status("meter-1")
         assert first.reading is not None and second.reading is not None
         assert [item.source for item in readings.list_for_device("meter-1")] == [
-            "status", "status"
+            "status",
+            "status",
         ]
     finally:
         context.__exit__(None, None, None)
 
 
-def test_individual_status_preserves_diagnostics_when_energy_is_missing(tmp_path) -> None:
+def test_cancel_after_individual_response_still_runs_one_capture_transaction(
+    tmp_path,
+) -> None:
+    cancellation = CancellationContext(15)
+    calls = []
+
+    class CancelAfterStatus(FakeGateway):
+        def get_device_specification(self, device_id):
+            calls.append("spec")
+            return super().get_device_specification(device_id)
+
+        def get_device_status(self, device_id):
+            calls.append("status")
+            result = super().get_device_status(device_id)
+            cancellation.cancel()
+            return result
+
+    gateway = CancelAfterStatus([Device("meter-1", "Casa")])
+    context, devices, readings, _ = services(tmp_path, gateway)
+    store = CountingReadingStore(readings)
+    service = ReadingService(
+        gateway,
+        DeviceService(gateway, devices, clock=lambda: NOW),
+        store,
+        clock=lambda: NOW,
+    )
+    try:
+        devices.upsert(Device("meter-1", "Casa"), NOW)
+        result = service.capture_individual_status("meter-1", cancellation)
+        assert result.reading is not None
+        assert calls == ["spec", "status"]
+        assert store.capture_sizes == [1]
+        assert len(store.capture_timeouts) == 1
+        assert 0 < store.capture_timeouts[0] <= 5
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_capture_busy_timeout_uses_only_post_response_stage_time(tmp_path) -> None:
+    monotonic_now = [0.0]
+    cancellation = CancellationContext(
+        15,
+        monotonic=lambda: monotonic_now[0],
+    )
+    gateway = FakeGateway([Device("meter-1", "Casa")])
+    context, devices, readings, _ = services(tmp_path, gateway)
+    store = CountingReadingStore(readings)
+
+    def slow_normalization_clock() -> datetime:
+        monotonic_now[0] += 4.0
+        return NOW
+
+    service = ReadingService(
+        gateway,
+        DeviceService(gateway, devices, clock=lambda: NOW),
+        store,
+        clock=slow_normalization_clock,
+    )
+    try:
+        devices.upsert(Device("meter-1", "Casa"), NOW)
+        result = service.capture_individual_status("meter-1", cancellation)
+
+        assert result.reading is not None
+        assert store.capture_timeouts == [pytest.approx(1.0)]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_cancel_after_batch_response_captures_all_usable_results_once(tmp_path) -> None:
+    cancellation = CancellationContext(120)
+
+    class CancelAfterBatch(FakeGateway):
+        def get_devices_status(self, device_ids):
+            result = super().get_devices_status(device_ids)
+            cancellation.cancel()
+            return result
+
+    gateway = CancelAfterBatch([Device("meter-1", "Casa"), Device("meter-2", "Garaj")])
+    context, devices, readings, _ = services(tmp_path, gateway)
+    store = CountingReadingStore(readings)
+    service = ReadingService(
+        gateway,
+        DeviceService(gateway, devices, clock=lambda: NOW),
+        store,
+        clock=lambda: NOW,
+    )
+    try:
+        results = service.refresh(cancellation)
+        assert sum(result.reading is not None for result in results) == 2
+        assert store.capture_sizes == [2]
+        assert len(store.capture_timeouts) == 1
+        assert 0 < store.capture_timeouts[0] <= 5
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_cancel_after_first_of_two_batches_keeps_first_response_committed(
+    tmp_path,
+) -> None:
+    cancellation = CancellationContext(120)
+
+    class CancelAfterFirstBatch(FakeGateway):
+        def get_devices_status(self, device_ids):
+            result = super().get_devices_status(device_ids)
+            if len(self.batch_calls) == 1:
+                cancellation.cancel()
+            return result
+
+    database = Database(tmp_path / "cancel-between-batches.sqlite3")
+    database.initialize()
+    gateway = CancelAfterFirstBatch(
+        [Device(f"meter-{index}", f"Contor {index}") for index in range(21)]
+    )
+
+    with pytest.raises(UserFacingError, match="anulată"):
+        with database.connect() as connection:
+            devices = DeviceRepository(connection)
+            service = ReadingService(
+                gateway,
+                DeviceService(gateway, devices, clock=lambda: NOW),
+                ReadingRepository(connection),
+                clock=lambda: NOW,
+            )
+            service.refresh(cancellation)
+
+    assert [len(call) for call in gateway.batch_calls] == [20]
+    with database.connect() as connection:
+        repository = ReadingRepository(connection)
+        assert all(
+            len(repository.list_for_device(f"meter-{index}")) == 1
+            for index in range(20)
+        )
+        assert repository.list_for_device("meter-20") == []
+
+
+def test_later_batch_database_failure_cannot_rollback_first_response(
+    tmp_path,
+) -> None:
+    database = Database(tmp_path / "later-batch-failure.sqlite3")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_later_capture
+            BEFORE INSERT ON readings
+            WHEN NEW.device_id = 'meter-20'
+            BEGIN
+                SELECT RAISE(ABORT, 'simulated later capture failure');
+            END
+            """
+        )
+
+    gateway = FakeGateway(
+        [Device(f"meter-{index}", f"Contor {index}") for index in range(21)]
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="later capture failure"):
+        with database.connect() as connection:
+            devices = DeviceRepository(connection)
+            service = ReadingService(
+                gateway,
+                DeviceService(gateway, devices, clock=lambda: NOW),
+                ReadingRepository(connection),
+                clock=lambda: NOW,
+            )
+            service.refresh()
+
+    assert [len(call) for call in gateway.batch_calls] == [20, 1]
+    with database.connect() as connection:
+        repository = ReadingRepository(connection)
+        assert all(
+            len(repository.list_for_device(f"meter-{index}")) == 1
+            for index in range(20)
+        )
+        assert repository.list_for_device("meter-20") == []
+
+
+def test_cancellation_during_authentication_causes_no_repository_write(
+    tmp_path,
+) -> None:
+    cancellation = CancellationContext(120)
+
+    class CancelDuringAuthenticationTransport:
+        def __init__(self) -> None:
+            self.requests: list[PreparedRequest] = []
+
+        def send(self, request: PreparedRequest):
+            self.requests.append(request)
+            if len(self.requests) > 1:
+                raise AssertionError("request started after cancellation")
+            cancellation.cancel()
+            return {"success": True, "result": {"access_token": "token"}}
+
+    database = Database(tmp_path / "cancel-during-authentication.sqlite3")
+    database.initialize()
+    transport = CancelDuringAuthenticationTransport()
+    gateway = TuyaClient(
+        TuyaSettings("client", "secret", "central_europe", Currency.RON),
+        transport=transport,
+        cancellation=cancellation,
+    )
+
+    with pytest.raises(UserFacingError, match="Lista dispozitivelor"):
+        with database.connect() as connection:
+            devices = DeviceRepository(connection)
+            ReadingService(
+                gateway,
+                DeviceService(gateway, devices, clock=lambda: NOW),
+                ReadingRepository(connection),
+                clock=lambda: NOW,
+            ).refresh(cancellation)
+
+    assert len(transport.requests) == 1
+    assert transport.requests[0].url.endswith("/v1.0/token?grant_type=1")
+    with database.connect() as connection:
+        assert DeviceRepository(connection).list_all() == []
+        assert ReadingRepository(connection).latest_by_device() == {}
+
+
+def test_individual_status_preserves_diagnostics_when_energy_is_missing(
+    tmp_path,
+) -> None:
     gateway = FakeGateway([Device("meter-1", "Casa")])
     gateway.values["meter-1"] = None
     context, devices, readings, service = services(tmp_path, gateway)
@@ -235,14 +488,15 @@ def test_refresh_revalidates_changed_scale_before_each_reading(tmp_path) -> None
     context, _, readings, service = services(tmp_path, gateway)
     try:
         first = service.refresh()[0]
-        gateway.specification = EnergySpecification(
-            "forward_energy_total", "kWh", 3
-        )
+        gateway.specification = EnergySpecification("forward_energy_total", "kWh", 3)
         second = service.refresh()[0]
 
         assert first.reading is not None and second.reading is not None
         assert (first.reading.scale, first.reading.value_kwh) == (2, Decimal("123.45"))
-        assert (second.reading.scale, second.reading.value_kwh) == (3, Decimal("12.345"))
+        assert (second.reading.scale, second.reading.value_kwh) == (
+            3,
+            Decimal("12.345"),
+        )
         assert [item.scale for item in readings.list_for_device("meter-1")] == [2, 3]
         assert gateway.specification_calls == ["meter-1", "meter-1"]
     finally:
@@ -252,20 +506,50 @@ def test_refresh_revalidates_changed_scale_before_each_reading(tmp_path) -> None
 def test_precision_sensitive_decimal_is_persisted_exactly(tmp_path) -> None:
     gateway = FakeGateway([Device("meter-1", "Casa")])
     gateway.values["meter-1"] = Decimal("0.12345678901234567890123456789")
-    gateway.specification = EnergySpecification(
-        "forward_energy_total", "kWh", 0
-    )
+    gateway.specification = EnergySpecification("forward_energy_total", "kWh", 0)
     context, _, readings, service = services(tmp_path, gateway)
     try:
         result = service.refresh()[0]
         assert result.reading is not None
-        assert result.reading.value_kwh == Decimal(
-            "0.12345678901234567890123456789"
-        )
+        assert result.reading.value_kwh == Decimal("0.12345678901234567890123456789")
         stored = readings.list_for_device("meter-1")[0]
         assert stored.raw_value == "0.12345678901234567890123456789"
         assert stored.value_kwh == Decimal("0.12345678901234567890123456789")
         assert "0.12345678901234567890123456789" in stored.raw_status_json
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_extreme_batch_status_decimal_creates_no_reading(tmp_path) -> None:
+    gateway = FakeGateway([Device("meter-1", "Casa"), Device("meter-2", "Garaj")])
+    gateway.values["meter-1"] = Decimal("1e-100000")
+    gateway.values["meter-2"] = Decimal("200")
+    gateway.specification = EnergySpecification("forward_energy_total", "kWh", 0)
+    context, _, readings, service = services(tmp_path, gateway)
+    try:
+        results = {result.device.device_id: result for result in service.refresh()}
+
+        assert results["meter-1"].reading is None
+        assert results["meter-1"].error is not None
+        assert results["meter-2"].reading is not None
+        assert readings.list_for_device("meter-1") == []
+        assert len(readings.list_for_device("meter-2")) == 1
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_extreme_individual_status_decimal_creates_no_reading(tmp_path) -> None:
+    gateway = FakeGateway([Device("meter-1", "Casa")])
+    gateway.values["meter-1"] = Decimal("1e-100000")
+    gateway.specification = EnergySpecification("forward_energy_total", "kWh", 0)
+    context, devices, readings, service = services(tmp_path, gateway)
+    try:
+        devices.upsert(Device("meter-1", "Casa"), NOW)
+        result = service.capture_individual_status("meter-1")
+
+        assert result.reading is None
+        assert result.capture_error is not None
+        assert readings.list_for_device("meter-1") == []
     finally:
         context.__exit__(None, None, None)
 
@@ -296,9 +580,7 @@ def test_circuit_breaker_alias_is_classified_captured_and_persisted(tmp_path) ->
 
 
 def test_mixed_account_classifies_and_omits_non_meter_from_capture(tmp_path) -> None:
-    gateway = FakeGateway(
-        [Device("meter-1", "Casa"), Device("lamp-1", "Lampă")]
-    )
+    gateway = FakeGateway([Device("meter-1", "Casa"), Device("lamp-1", "Lampă")])
     gateway.unsupported.add("lamp-1")
     context, devices, readings, service = services(tmp_path, gateway)
     try:
@@ -379,8 +661,7 @@ def test_historical_meter_becoming_unsupported_is_not_a_refresh_failure(
 def test_reading_retains_exact_redacted_specification_snapshot(tmp_path) -> None:
     gateway = FakeGateway([Device("meter-1", "Casa")])
     raw_specification = (
-        '{"status":[{"code":"forward_energy_total",'
-        '"values":{"scale":2,"unit":"kWh"}}]}'
+        '{"status":[{"code":"forward_energy_total","values":{"scale":2,"unit":"kWh"}}]}'
     )
     gateway.specification = EnergySpecification(
         "forward_energy_total", "kWh", 2, raw_specification
@@ -390,7 +671,10 @@ def test_reading_retains_exact_redacted_specification_snapshot(tmp_path) -> None
         result = service.refresh()[0]
         assert result.reading is not None
         assert result.reading.raw_specification_json == raw_specification
-        assert readings.list_for_device("meter-1")[0].raw_specification_json == raw_specification
+        assert (
+            readings.list_for_device("meter-1")[0].raw_specification_json
+            == raw_specification
+        )
         stored_device = devices.get("meter-1")
         assert stored_device is not None
         assert stored_device.raw_specification_json == raw_specification
@@ -453,9 +737,7 @@ def test_paginated_client_devices_are_all_refreshed(tmp_path) -> None:
 
     transport = Transport()
     client = TuyaClient(
-        TuyaSettings(
-            "client", "secret", "central_europe", Currency.RON
-        ),
+        TuyaSettings("client", "secret", "central_europe", Currency.RON),
         transport=transport,
         clock_ms=lambda: "1721124000000",
     )
@@ -463,9 +745,7 @@ def test_paginated_client_devices_are_all_refreshed(tmp_path) -> None:
     context, _, readings, service = services(tmp_path, client)
     try:
         results = service.refresh()
-        assert [result.device.device_id for result in results] == [
-            "meter-1", "meter-2"
-        ]
+        assert [result.device.device_id for result in results] == ["meter-1", "meter-2"]
         assert all(result.succeeded for result in results)
         assert len(readings.list_for_device("meter-1")) == 1
         assert len(readings.list_for_device("meter-2")) == 1

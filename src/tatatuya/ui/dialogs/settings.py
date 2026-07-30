@@ -24,7 +24,7 @@ from tatatuya.domain.models import Currency, TuyaSettings
 from tatatuya.services.settings_service import ConnectionTestResult, SettingsService
 from tatatuya.ui import text
 from tatatuya.ui.components.combo_box import PaletteSafeComboBox
-from tatatuya.ui.workers import WorkflowThread
+from tatatuya.ui.workers import WorkerOwner, WorkflowThread
 
 
 REGION_LABELS = {
@@ -54,10 +54,12 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         initial_settings: TuyaSettings | None = None,
+        worker_owner: WorkerOwner | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.regions = dict(regions)
+        self.worker_owner = worker_owner
         self.active_thread: WorkflowThread | None = None
         self._active_operation: str | None = None
         self._pending_saved: SavedSettings | None = None
@@ -179,7 +181,12 @@ class SettingsDialog(QDialog):
         self.feedback.style().polish(self.feedback)
         self._set_actions_enabled(False)
         self._active_operation = "test"
-        thread = WorkflowThread(lambda: self.service.test_connection(settings), self)
+        thread = WorkflowThread(
+            lambda context: self.service.test_connection(settings, context), self
+        )
+        if self.worker_owner is not None:
+            thread.setParent(None)
+            self.worker_owner.track(thread)
         thread.succeeded.connect(self._operation_succeeded)
         thread.failed.connect(self._operation_failed)
         thread.finished.connect(self._thread_finished)
@@ -295,7 +302,13 @@ class SettingsDialog(QDialog):
         self.feedback.setText(text.SAVING_SETTINGS)
         self._set_actions_enabled(False)
         self._active_operation = "save"
-        thread = WorkflowThread(lambda: self.service.save(settings), self)
+        thread = WorkflowThread(
+            lambda context: _save_with_cancellation(self.service, settings, context),
+            self,
+        )
+        if self.worker_owner is not None:
+            thread.setParent(None)
+            self.worker_owner.track(thread)
         thread.succeeded.connect(self._operation_succeeded)
         thread.failed.connect(self._operation_failed)
         thread.finished.connect(self._thread_finished)
@@ -341,3 +354,12 @@ def _connection_key(settings: TuyaSettings) -> tuple[str, str, str]:
         settings.client_secret,
         settings.region,
     )
+
+
+def _save_with_cancellation(
+    service: SettingsService,
+    settings: TuyaSettings,
+    cancellation,
+) -> TuyaSettings:
+    cancellation.checkpoint()
+    return service.save(settings)

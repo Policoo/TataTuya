@@ -2,7 +2,14 @@ from decimal import Decimal
 
 import pytest
 
-from tatatuya.domain.energy import canonical_decimal, normalize_energy
+from tatatuya.domain.energy import (
+    MAX_CANONICAL_DECIMAL_CHARACTERS,
+    MAX_ENERGY_SCALE,
+    DecimalExpansionError,
+    canonical_decimal,
+    canonical_decimal_length,
+    normalize_energy,
+)
 from tatatuya.domain.errors import UserFacingError
 
 
@@ -43,3 +50,51 @@ def test_rejects_unsupported_unit() -> None:
 def test_decimal_serialization_is_canonical() -> None:
     assert canonical_decimal(Decimal("123.4500")) == "123.45"
     assert canonical_decimal(Decimal("0.000")) == "0"
+    assert canonical_decimal(Decimal("-0")) == "0"
+
+
+@pytest.mark.parametrize(
+    ("unit", "expected"),
+    [
+        ("kWh", Decimal("1e-123")),
+        ("Wh", Decimal("1e-126")),
+    ],
+)
+def test_maximum_energy_scale_remains_exact_within_canonical_bound(
+    unit, expected
+) -> None:
+    normalized = normalize_energy(1, MAX_ENERGY_SCALE, unit)
+
+    assert MAX_ENERGY_SCALE == 123
+    assert normalized == expected
+    assert canonical_decimal_length(normalized) <= MAX_CANONICAL_DECIMAL_CHARACTERS
+
+
+def test_normalization_rejects_scale_above_fixed_representation_limit() -> None:
+    with pytest.raises(UserFacingError, match="Scara"):
+        normalize_energy(1, MAX_ENERGY_SCALE + 1, "kWh")
+
+
+@pytest.mark.parametrize(
+    ("raw", "scale"),
+    [
+        (Decimal("1e-127"), 0),
+        (Decimal("1e-126"), 1),
+        (Decimal("1e128"), 0),
+    ],
+)
+def test_normalization_rejects_oversized_raw_or_normalized_value(raw, scale) -> None:
+    with pytest.raises(UserFacingError, match="depășește"):
+        normalize_energy(raw, scale, "kWh")
+
+
+def test_canonical_limit_rejects_before_fixed_rendering(monkeypatch) -> None:
+    def unexpected_format(*args, **kwargs):
+        raise AssertionError("fixed rendering must not run")
+
+    monkeypatch.setattr(
+        "tatatuya.domain.energy.format", unexpected_format, raising=False
+    )
+
+    with pytest.raises(DecimalExpansionError):
+        canonical_decimal(Decimal("1e-100000"))

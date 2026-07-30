@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any
@@ -91,6 +91,13 @@ class Reading:
     raw_status_json: str
     id: int | None = None
     raw_specification_json: str = "{}"
+    external_event_key: str | None = None
+    imported_at_utc: datetime | None = None
+    specification_observed_at_utc: datetime | None = None
+    source_code: str | None = None
+    cloud_day_local_date: date | None = None
+    cloud_day_timezone: str | None = None
+    cloud_day_utc_offset: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

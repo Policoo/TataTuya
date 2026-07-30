@@ -64,8 +64,8 @@ def test_fresh_database_primary_workflow_reconstructs_saved_calculation(
             fixture("specification.json"),
             fixture("specification.json"),
             fixture("batch_status_partial.json"),
-            fixture("individual_status_later.json"),
-            fixture("specification.json"),
+                fixture("specification.json"),
+                fixture("individual_status_later.json"),
         ]
     )
     reading_times = iter(
@@ -111,6 +111,8 @@ def test_fresh_database_primary_workflow_reconstructs_saved_calculation(
             now=lambda: STARTED_AT + timedelta(minutes=31),
         )
         calculation_context = billing.prepare("meter-1", Currency.RON)
+        assert calculation_context.default_start_reading_id is not None
+        assert calculation_context.default_end_reading_id is not None
         saved = billing.save_calculation(
             "meter-1",
             calculation_context.default_start_reading_id,

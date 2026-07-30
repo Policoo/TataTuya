@@ -47,10 +47,11 @@ class BillingPreferenceStore(Protocol):
 class CalculationContext:
     device_id: str
     readings: tuple[Reading, ...]
-    default_start_reading_id: int
-    default_end_reading_id: int
+    default_start_reading_id: int | None
+    default_end_reading_id: int | None
     remembered_unit_price: Decimal | None
     currency: Currency
+    tuya_configured: bool = False
 
 
 class BillingService:
@@ -76,28 +77,24 @@ class BillingService:
                 ),
             )
         )
-        if len(readings) < 2:
-            raise UserFacingError(
-                "Citiri insuficiente",
-                "Sunt necesare cel puțin două citiri pentru a calcula consumul.",
-            )
-
-        newest = readings[-1]
-        earliest = readings[0]
         latest_calculation = self.calculations.latest_for_device(device_id)
         available_ids = {reading.id for reading in readings}
-        previous_end_id = (
-            latest_calculation.end_reading_id
-            if latest_calculation is not None
-            and latest_calculation.end_reading_id in available_ids
-            else earliest.id
-        )
-        newest_id = newest.id
-        if any(reading.id is None for reading in readings) or previous_end_id is None or newest_id is None:
+        if any(reading.id is None for reading in readings):
             raise UserFacingError(
                 "Citiri indisponibile",
                 "Citirile salvate nu au putut fi pregătite pentru calcul.",
             )
+        if readings:
+            previous_end_id = (
+                latest_calculation.end_reading_id
+                if latest_calculation is not None
+                and latest_calculation.end_reading_id in available_ids
+                else readings[0].id
+            )
+            newest_id = readings[-1].id
+        else:
+            previous_end_id = None
+            newest_id = None
 
         preference = self.preferences.get(device_id)
         remembered = (

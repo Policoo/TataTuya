@@ -73,6 +73,11 @@ class SettingsRepository:
             currency=Currency(values[SETTING_CURRENCY] or Currency.RON.value),
         )
 
+    def load_currency(self) -> Currency:
+        """Load the local billing setting independently from Tuya credentials."""
+
+        return Currency(self.get(SETTING_CURRENCY) or Currency.RON.value)
+
 
 class DatabaseSettingsStore:
     """Thread-safe settings adapter that owns one connection per operation."""

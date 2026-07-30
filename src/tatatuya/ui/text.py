@@ -30,15 +30,18 @@ REFRESH_FAILED = "Actualizarea nu a reușit"
 NO_METERS = "Nu există contoare disponibile."
 NO_METERS_HELP = "Apăsați Actualizează pentru a încărca dispozitivele din Tuya."
 SETTINGS_REQUIRED = "Configurați conexiunea Tuya"
-SETTINGS_REQUIRED_HELP = (
-    "Introduceți Client ID, Client Secret și regiunea în Setări."
-)
+SETTINGS_REQUIRED_HELP = "Introduceți Client ID, Client Secret și regiunea în Setări."
 OPEN_SETTINGS = "Deschide Setări"
+TUYA_NOT_CONFIGURED_WARNING = (
+    "Conexiunea Tuya nu este configurată. Datele salvate rămân disponibile."
+)
 UNKNOWN = "Necunoscută"
 ONLINE = "Online"
 OFFLINE = "Offline"
 NOT_IN_TUYA = "Indisponibil în Tuya"
-STATUS_UNAVAILABLE = "Statusul nu este disponibil deoarece contorul nu mai apare în Tuya."
+STATUS_UNAVAILABLE = (
+    "Statusul nu este disponibil deoarece contorul nu mai apare în Tuya."
+)
 NO_READING = "Fără citire"
 CLOSING_AFTER_WORK = "Se finalizează operațiunea înainte de închidere…"
 METERS_COUNT = "{count} contoare"
@@ -66,9 +69,7 @@ COPY_TECHNICAL_DETAILS = "Copiază detaliile"
 TECHNICAL_DETAILS = "Detalii tehnice"
 
 CALCULATION_TITLE = "Calcul consum"
-CALCULATION_SUBTITLE = (
-    "Alegeți mai întâi data, apoi citirea exactă pentru începutul și sfârșitul perioadei."
-)
+CALCULATION_SUBTITLE = "Alegeți mai întâi data, apoi citirea exactă pentru începutul și sfârșitul perioadei."
 DATE = "Data"
 EXACT_READING = "Citire exactă"
 PERIOD_START = "Început"
@@ -88,6 +89,28 @@ CALCULATION_INVALID_PREVIEW = "Verificați citirile și prețul selectate."
 SAVE_CALCULATION = "Salvează calculul"
 PREPARING_CALCULATION = "Se pregătesc citirile pentru calcul…"
 SAVING_CALCULATION = "Se salvează calculul…"
+INSUFFICIENT_READINGS = "Sunt necesare cel puțin două citiri salvate pentru a calcula."
+CLOUD_IMPORT_TITLE = "Citiri din Tuya Cloud"
+CLOUD_IMPORT_HELP = "Salvează local cel mult o citire pentru fiecare dintre ultimele 7 zile."
+CLOUD_IMPORT_RECENT = "Importă citirile din ultimele 7 zile"
+CLOUD_OPEN_SETTINGS = "Configurează conexiunea în Setări"
+CLOUD_IMPORT_READY = "Importul este disponibil pentru contorul selectat."
+CLOUD_IMPORTING = "Se încarcă și se salvează citirile zilnice…"
+CLOUD_IMPORT_RESULT = "Import finalizat: {new} citiri noi, {existing} deja existente."
+CLOUD_IMPORT_EMPTY = "Nu au fost returnate citiri pentru ultimele 7 zile sau acestea nu mai sunt disponibile."
+CLOUD_IMPORT_NEEDS_SETTINGS = "Conexiunea Tuya nu este configurată."
+CLOUD_IMPORT_NOT_AVAILABLE = (
+    "Importul din Tuya Cloud este dezactivat de configurația aplicației."
+)
+CLOUD_IMPORT_PERMISSION_UNAVAILABLE = (
+    "Serviciul sau permisiunea Tuya Cloud nu este disponibilă pentru acest proiect."
+)
+CLOUD_IMPORT_RATE_LIMITED = (
+    "Limita de cereri Tuya a fost atinsă. Încercați din nou mai târziu."
+)
+CLOUD_IMPORT_RESPONSE_LIMIT = "Tuya a returnat prea multe date pentru ultimele 7 zile. Încercați din nou mai târziu."
+CLOUD_IMPORT_FAILED = "Importul nu a reușit. Puteți încerca din nou."
+CLOUD_IMPORT_CANCELLED = "Importul a fost anulat."
 
 HISTORY_TITLE = "Istoric contor"
 READINGS = "Citiri"
@@ -97,8 +120,13 @@ CUMULATIVE_READING = "Index cumulativ"
 RAW_VALUE = "Valoare brută"
 SCALE_AND_UNIT = "Scară și unitate"
 SOURCE = "Sursă"
+CLOUD_DETAILS = "Detalii import cloud"
+CLOUD_READING_DETAILS = (
+    "Importat: {imported}; zi locală: {day}; fus: {timezone} ({offset})"
+)
 SOURCE_BATCH = "Actualizare"
 SOURCE_INDIVIDUAL = "Status individual"
+SOURCE_CLOUD_DAILY = "Import zilnic Tuya Cloud"
 CALCULATION_DATE = "Data calculului"
 PERIOD = "Perioadă"
 UNIT_PRICE = "Preț unitar"
@@ -108,7 +136,9 @@ PREPARING_HISTORY = "Se încarcă istoricul contorului…"
 LOADING_SETTINGS = "Se încarcă setările…"
 
 DEVICE_INFO_TITLE = "Informații contor"
-DEVICE_INFO_SUBTITLE = "Metadate primite de la Tuya. Aceste informații nu pot fi modificate aici."
+DEVICE_INFO_SUBTITLE = (
+    "Metadate primite de la Tuya. Aceste informații nu pot fi modificate aici."
+)
 DEVICE_NAME = "Nume contor"
 DEVICE_ID = "ID dispozitiv"
 PRODUCT = "Produs"

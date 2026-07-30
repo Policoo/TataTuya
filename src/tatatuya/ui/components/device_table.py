@@ -128,6 +128,15 @@ class DeviceTable(QTableWidget):
             )
             self.setColumnWidth(4, actions_width + 24)
 
+    def set_remote_enabled(self, enabled: bool) -> None:
+        for row_index, row in enumerate(self.rows):
+            actions = self.cellWidget(row_index, 4)
+            if actions is None:
+                continue
+            for button in actions.findChildren(QPushButton):
+                if button.text() == text.STATUS:
+                    button.setEnabled(enabled and row.device.present_in_tuya is not False)
+
 
 class RowActions(QWidget):
     def __init__(self, device: Device, table: DeviceTable) -> None:

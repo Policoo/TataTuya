@@ -90,6 +90,26 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
             ADD COLUMN raw_specification_json TEXT NOT NULL DEFAULT '{}';
         """,
     ),
+    (
+        4,
+        """
+        ALTER TABLE readings ADD COLUMN external_event_key TEXT;
+        ALTER TABLE readings ADD COLUMN imported_at_utc TEXT;
+        ALTER TABLE readings ADD COLUMN specification_observed_at_utc TEXT;
+        ALTER TABLE readings ADD COLUMN source_code TEXT;
+        ALTER TABLE readings ADD COLUMN cloud_day_local_date TEXT;
+        ALTER TABLE readings ADD COLUMN cloud_day_timezone TEXT;
+        ALTER TABLE readings ADD COLUMN cloud_day_utc_offset TEXT;
+
+        CREATE UNIQUE INDEX readings_external_event_key
+            ON readings(external_event_key)
+            WHERE external_event_key IS NOT NULL;
+        CREATE UNIQUE INDEX readings_cloud_daily_device_date
+            ON readings(device_id, cloud_day_local_date)
+            WHERE source = 'cloud_daily'
+              AND cloud_day_local_date IS NOT NULL;
+        """,
+    ),
 )
 
 

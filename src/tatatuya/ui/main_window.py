@@ -5,10 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
-    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -29,14 +28,14 @@ from tatatuya.ui.components.device_table import (
     DeviceTableRow,
     should_show_device,
 )
-from tatatuya.ui.workers import WorkflowThread
+from tatatuya.ui.workers import WorkerOwner, WorkflowThread
 
 
 @dataclass(frozen=True, slots=True)
 class InitialState:
     rows: list[DeviceTableRow]
     settings_configured: bool
-    refresh_workflow: Callable[[], list[DeviceRefreshResult]] | None
+    refresh_workflow: Callable[..., list[DeviceRefreshResult]] | None
 
 
 class MainWindow(QMainWindow):
@@ -49,16 +48,21 @@ class MainWindow(QMainWindow):
 
     def __init__(
         self,
-        refresh_workflow: Callable[[], list[DeviceRefreshResult]] | None = None,
+        refresh_workflow: Callable[..., list[DeviceRefreshResult]] | None = None,
         *,
-        bootstrap_workflow: Callable[[], InitialState] | None = None,
+        bootstrap_workflow: Callable[..., InitialState] | None = None,
         cached_rows: list[DeviceTableRow] | None = None,
         settings_configured: bool = False,
+        worker_owner: WorkerOwner | None = None,
     ) -> None:
         super().__init__()
         self.refresh_workflow = refresh_workflow
         self.bootstrap_workflow = bootstrap_workflow
         self.settings_configured = settings_configured
+        self.worker_owner = worker_owner or WorkerOwner(self)
+        self.shutdown_requested: Callable[[], None] | None = None
+        self._allow_close = False
+        self._shutdown_coordinator: object | None = None
         self.active_threads: list[WorkflowThread] = []
         self._close_when_idle = False
         self._refresh_when_idle = False
@@ -71,9 +75,6 @@ class MainWindow(QMainWindow):
             self.refresh_button.setEnabled(False)
             self.settings_button.setEnabled(False)
             self.status_label.setText(text.LOADING_LOCAL_DATA)
-        application = QApplication.instance()
-        if application is not None:
-            application.aboutToQuit.connect(self.shutdown_workers)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -111,6 +112,18 @@ class MainWindow(QMainWindow):
         summary_layout.addStretch()
         summary_layout.addWidget(self.count_label)
         layout.addWidget(summary)
+
+        self.settings_warning = QFrame()
+        self.settings_warning.setObjectName("SettingsWarning")
+        warning_layout = QHBoxLayout(self.settings_warning)
+        self.settings_warning_label = QLabel(text.TUYA_NOT_CONFIGURED_WARNING)
+        self.settings_warning_label.setWordWrap(True)
+        warning_layout.addWidget(self.settings_warning_label, 1)
+        warning_button = QPushButton(text.OPEN_SETTINGS)
+        warning_button.setObjectName("SecondaryButton")
+        warning_button.clicked.connect(self.settings_requested)
+        warning_layout.addWidget(warning_button)
+        layout.addWidget(self.settings_warning)
 
         self.content = QStackedWidget()
         self.table = DeviceTable()
@@ -181,6 +194,7 @@ class MainWindow(QMainWindow):
             self.bootstrap_workflow,
             self._bootstrap_succeeded,
             self._bootstrap_failed,
+            timeout_seconds=120,
         )
 
     def _bootstrap_succeeded(self, payload: object) -> None:
@@ -208,14 +222,18 @@ class MainWindow(QMainWindow):
 
     def set_rows(self, rows: list[DeviceTableRow]) -> None:
         self.table.set_rows(rows)
+        remote_enabled = self.settings_configured and not self.active_threads
+        self.table.set_remote_enabled(remote_enabled)
+        self.refresh_button.setEnabled(remote_enabled)
         count = len(rows)
         self.count_label.setText(
             text.ONE_METER if count == 1 else text.METERS_COUNT.format(count=count)
         )
-        if not self.settings_configured:
-            self.content.setCurrentWidget(self.settings_state)
-        elif rows:
+        self.settings_warning.setVisible(bool(rows) and not self.settings_configured)
+        if rows:
             self.content.setCurrentWidget(self.table)
+        elif not self.settings_configured:
+            self.content.setCurrentWidget(self.settings_state)
         else:
             self.content.setCurrentWidget(self.empty_state)
 
@@ -231,11 +249,12 @@ class MainWindow(QMainWindow):
             self.refresh_workflow,
             self._refresh_succeeded,
             self._operation_failed,
+            timeout_seconds=120,
         )
 
     def apply_settings(
         self,
-        refresh_workflow: Callable[[], list[DeviceRefreshResult]],
+        refresh_workflow: Callable[..., list[DeviceRefreshResult]],
         *,
         connection_verified: bool = False,
         refresh_when_verified: bool = False,
@@ -264,9 +283,11 @@ class MainWindow(QMainWindow):
 
     def run_background_operation(
         self,
-        call: Callable[[], object],
+        call: Callable[..., object],
         success_handler: Callable[[object], None],
         working_status: str,
+        *,
+        timeout_seconds: float = 15,
     ) -> None:
         """Run a non-refresh workflow without blocking the Qt event loop."""
         if self.active_threads:
@@ -282,7 +303,9 @@ class MainWindow(QMainWindow):
             self.status_label.setText(text.READY)
             self.error_raised.emit(error)
 
-        self._run_worker(call, succeeded, failed)
+        self._run_worker(
+            call, succeeded, failed, timeout_seconds=timeout_seconds
+        )
 
     def _schedule_refresh(self) -> None:
         if self.active_threads:
@@ -314,15 +337,19 @@ class MainWindow(QMainWindow):
 
     def _run_worker(
         self,
-        call: Callable[[], object],
+        call: Callable[..., object],
         success_handler: Callable[[object], None],
         failure_handler: Callable[[UserFacingError], None],
+        *,
+        timeout_seconds: float = 15,
     ) -> None:
         self.settings_button.setEnabled(False)
+        self.table.set_remote_enabled(False)
         # The worker lifetime is tracked explicitly in active_threads. Keeping
         # it parentless avoids a deferred-delete race if the window closes just
         # after a finished worker has scheduled deleteLater().
-        thread = WorkflowThread(call)
+        thread = WorkflowThread(call, timeout_seconds=timeout_seconds)
+        self.worker_owner.track(thread)
         thread.succeeded.connect(success_handler)
         thread.failed.connect(failure_handler)
         thread.finished.connect(self._operation_finished)
@@ -333,9 +360,14 @@ class MainWindow(QMainWindow):
 
     def _operation_finished(self) -> None:
         self.refresh_button.setEnabled(
-            self.bootstrap_workflow is None and not self._close_when_idle
+            self.settings_configured
+            and self.bootstrap_workflow is None
+            and not self._close_when_idle
         )
         self.settings_button.setEnabled(not self._close_when_idle)
+        self.table.set_remote_enabled(
+            self.settings_configured and not self._close_when_idle
+        )
 
     def _worker_finished(self, thread: WorkflowThread) -> None:
         if thread in self.active_threads:
@@ -347,21 +379,24 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.refresh_devices)
 
     def shutdown_workers(self) -> None:
-        """Finish owned threads before QApplication tears down their QObjects."""
-        threads = list(self.active_threads)
-        for thread in threads:
-            thread.requestInterruption()
-        for thread in threads:
-            if thread is not QThread.currentThread():
-                thread.wait()
-        self.active_threads.clear()
+        """Request cooperative cancellation without blocking the Qt thread."""
+
+        self.worker_owner.cancel_all()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+        if self._allow_close:
+            event.accept()
+            return
+        if self.shutdown_requested is not None:
+            event.ignore()
+            self.shutdown_requested()
+            return
         if self.active_threads:
             self._close_when_idle = True
             self.refresh_button.setEnabled(False)
             self.settings_button.setEnabled(False)
             self.status_label.setText(text.CLOSING_AFTER_WORK)
+            self.shutdown_workers()
             event.ignore()
             return
         event.accept()

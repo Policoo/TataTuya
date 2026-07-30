@@ -6,6 +6,7 @@ from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
+from tatatuya.domain.cancellation import CancellationContext
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import TuyaSettings
 from tatatuya.services.ports import SettingsStore
@@ -41,7 +42,13 @@ class SettingsService:
         self.store.save_tuya(normalized)
         return normalized
 
-    def test_connection(self, settings: TuyaSettings) -> ConnectionTestResult:
+    def test_connection(
+        self,
+        settings: TuyaSettings,
+        cancellation: CancellationContext | None = None,
+    ) -> ConnectionTestResult:
+        if cancellation is not None:
+            cancellation.checkpoint()
         normalized = self.validate(settings)
         try:
             gateway = self.gateway_factory(normalized)
@@ -52,6 +59,8 @@ class SettingsService:
                 "Autentificarea Tuya nu a reușit. Verificați Client ID, Client Secret și regiunea.",
                 exc,
             ) from exc
+        if cancellation is not None:
+            cancellation.checkpoint()
         try:
             devices = gateway.list_devices()
         except Exception as exc:
@@ -60,6 +69,8 @@ class SettingsService:
                 "Autentificarea a reușit, dar Tuya nu a permis citirea listei de dispozitive. Verificați permisiunile proiectului cloud.",
                 exc,
             ) from exc
+        if cancellation is not None:
+            cancellation.checkpoint()
         return ConnectionTestResult(normalized, len(devices))
 
     @staticmethod

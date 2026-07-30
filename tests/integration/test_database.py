@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import sqlite3
@@ -45,7 +46,7 @@ def test_empty_database_migrates_idempotently(tmp_path) -> None:
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-    assert [row[0] for row in versions] == [1, 2, 3]
+    assert [row[0] for row in versions] == [1, 2, 3, 4]
     assert {"settings", "devices", "readings", "calculations"} <= tables
 
 
@@ -106,7 +107,7 @@ def test_upgrade_removes_obsolete_account_uid_setting(tmp_path, monkeypatch) -> 
         versions = connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
-    assert [row[0] for row in versions] == [1, 2, 3]
+    assert [row[0] for row in versions] == [1, 2, 3, 4]
 
 
 def test_version_two_upgrade_preserves_history_with_unknown_presence(
@@ -162,6 +163,57 @@ def test_version_two_upgrade_preserves_history_with_unknown_presence(
     assert upgraded_reading.raw_specification_json == "{}"
 
 
+def test_version_three_upgrade_adds_cloud_provenance_without_rewriting_history(
+    tmp_path, monkeypatch
+) -> None:
+    database = Database(tmp_path / "version-three.sqlite3")
+    all_migrations = migrations.MIGRATIONS
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations[:3])
+    database.initialize()
+    with database.connect() as connection:
+        DeviceRepository(connection).upsert(Device("meter-1", "Casa"), NOW)
+        cursor = connection.execute(
+            """
+            INSERT INTO readings(
+                device_id, recorded_at_utc, raw_value, scale, source_unit,
+                value_kwh, source, raw_status_json, raw_specification_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "meter-1",
+                NOW.isoformat(),
+                "12345",
+                2,
+                "kWh",
+                "123.45",
+                "batch",
+                "{}",
+                "{}",
+            ),
+        )
+        assert cursor.lastrowid is not None
+        legacy_id = int(cursor.lastrowid)
+
+    monkeypatch.setattr(migrations, "MIGRATIONS", all_migrations)
+    database.initialize()
+    with database.connect() as connection:
+        upgraded = ReadingRepository(connection).get(legacy_id)
+        indexes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+
+    assert upgraded is not None
+    assert upgraded.external_event_key is None
+    assert upgraded.cloud_day_local_date is None
+    assert {
+        "readings_external_event_key",
+        "readings_cloud_daily_device_date",
+    } <= indexes
+
+
 def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:
     database = initialized_database(tmp_path)
     first_device = Device("meter-1", "Casa Veche", online=True, raw_device_json='{"v":1}')
@@ -185,6 +237,60 @@ def test_device_upsert_preserves_history_and_equal_readings(tmp_path) -> None:
     assert [item.value_kwh for item in stored] == [Decimal("123.45"), Decimal("123.45")]
     assert updated.name == "Casa Nouă"
     assert updated.first_seen_at_utc == saved_device.first_seen_at_utc
+
+
+def test_cloud_daily_import_is_idempotent_by_event_and_local_day(tmp_path) -> None:
+    database = initialized_database(tmp_path)
+    imported = NOW + timedelta(hours=1)
+    candidate = Reading(
+        "meter-1",
+        NOW,
+        "10000",
+        2,
+        "kWh",
+        Decimal("100"),
+        "cloud_daily",
+        '{"code":"forward_energy_total"}',
+        raw_specification_json='{"scale":2}',
+        external_event_key="event-key-1",
+        imported_at_utc=imported,
+        specification_observed_at_utc=NOW,
+        source_code="forward_energy_total",
+        cloud_day_local_date=NOW.date(),
+        cloud_day_timezone="Europe/Amsterdam",
+        cloud_day_utc_offset="+02:00",
+    )
+    with database.connect() as connection:
+        DeviceRepository(connection).upsert(Device("meter-1", "Casa"), NOW)
+        repository = ReadingRepository(connection)
+        first = repository.import_cloud_daily((candidate,))
+        changed_diagnostics = replace(
+            candidate,
+            raw_status_json='{"unrelated":"changed"}',
+            raw_specification_json='{"extra":true,"scale":2}',
+        )
+        repeated_results = [
+            repository.import_cloud_daily((changed_diagnostics,))
+            for _ in range(100)
+        ]
+        repeated = repeated_results[-1]
+        later_same_day = replace(
+            candidate,
+            recorded_at_utc=NOW + timedelta(hours=2),
+            raw_value="10100",
+            value_kwh=Decimal("101"),
+            external_event_key="event-key-2",
+        )
+        overlapping = repository.import_cloud_daily((later_same_day,))
+        stored = repository.list_for_device("meter-1")
+
+    assert (first.new_count, first.reused_count) == (1, 0)
+    assert (repeated.new_count, repeated.reused_count) == (0, 1)
+    assert all(result.readings[0].id == first.readings[0].id for result in repeated_results)
+    assert (overlapping.new_count, overlapping.reused_count) == (0, 1)
+    assert first.readings[0].id == repeated.readings[0].id == overlapping.readings[0].id
+    assert len(stored) == 1
+    assert stored[0].raw_status_json == candidate.raw_status_json
 
 
 def test_latest_readings_for_all_devices_uses_timestamp_then_id(tmp_path) -> None:
