@@ -345,7 +345,6 @@ class Database:
             self._install_cancellation_handler(source, cancellation)
             try:
                 self._migration_checkpoint("source-opened", cancellation)
-                source.execute("PRAGMA key = ''")
                 expected_snapshot = self._database_snapshot(
                     source,
                     "main",
@@ -629,7 +628,6 @@ class Database:
         self._install_cancellation_handler(connection, cancellation)
         try:
             self._checkpoint(cancellation)
-            connection.execute("PRAGMA key = ''")
             table = connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'"
             ).fetchone()

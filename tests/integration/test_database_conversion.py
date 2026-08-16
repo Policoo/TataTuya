@@ -27,6 +27,7 @@ from tatatuya.infrastructure.secrets import (
 _LEGACY_SECRET = b"synthetic-migration-secret"
 _PROBE_ROWS = ((1, "alpha"), (2, "beta"), (3, "gamma"))
 _ENCRYPTED_HEADER_SIZE = len(_PLAINTEXT_HEADER)
+_FAKE_ENCRYPTED_HEADER = bytes(value ^ 0xFF for value in _PLAINTEXT_HEADER)
 
 
 class InjectedMigrationFailure(RuntimeError):
@@ -55,7 +56,6 @@ class FakeCipherDriver:
 
     def __init__(self) -> None:
         self._required_keys: dict[tuple[int, int], bytes] = {}
-        self._encoded: set[tuple[int, int]] = set()
         self.blocked_verification_statement: str | None = None
         self.progress_interruptions = 0
 
@@ -77,16 +77,22 @@ class FakeCipherDriver:
         identity = self._identity(path)
         self._required_keys[identity] = key
 
+    @staticmethod
+    def _header(path: Path) -> bytes:
+        with path.open("rb") as stream:
+            return stream.read(_ENCRYPTED_HEADER_SIZE)
+
     def _encode(self, path: Path) -> None:
-        identity = self._identity(path)
-        if identity not in self._encoded:
+        if self._header(path) == _PLAINTEXT_HEADER:
             self._toggle_header(path)
-            self._encoded.add(identity)
 
     def is_encrypted(self, path: Path) -> bool:
         if not path.exists():
             return False
-        return self._identity(path) in self._required_keys
+        return (
+            self._header(path) == _FAKE_ENCRYPTED_HEADER
+            and self._identity(path) in self._required_keys
+        )
 
     def connect(self, path: str | Path) -> FakeCipherConnection:
         if str(path) == ":memory:":
@@ -98,10 +104,9 @@ class FakeCipherDriver:
         reencode = False
         if resolved.exists() and resolved.stat().st_size:
             identity = self._identity(resolved)
-            required_key = self._required_keys.get(identity)
-            if identity in self._encoded:
+            if self._header(resolved) == _FAKE_ENCRYPTED_HEADER:
+                required_key = self._required_keys.get(identity)
                 self._toggle_header(resolved)
-                self._encoded.remove(identity)
                 reencode = True
         try:
             connection = sqlite3.connect(resolved)
@@ -166,8 +171,7 @@ class FakeCipherConnection:
             self.presented_key = bytes.fromhex(key_match.group(1))
             return _Rows([])
         if statement == "PRAGMA key = ''":
-            self.presented_key = b""
-            return _Rows([])
+            raise sqlite3.OperationalError("empty SQLCipher keys are unsupported")
         if statement.casefold() == "pragma cipher_version":
             return _Rows([("fake-sqlcipher",)])
 
@@ -269,6 +273,31 @@ class FaultInjectingDatabase(Database):
             else:
                 raise InjectedMigrationFailure(stage)
         super()._migration_checkpoint(stage, cancellation)
+
+
+def test_fake_cipher_ignores_stale_identity_for_plaintext_file(
+    tmp_path, monkeypatch
+) -> None:
+    driver = FakeCipherDriver()
+    reused_identity = (1, 1)
+    monkeypatch.setattr(driver, "_identity", lambda path: reused_identity)
+    stale = tmp_path / "removed-temporary.sqlite3"
+    stale.touch()
+    driver._register_encrypted(stale, b"k" * 32)
+    driver._encode(stale)
+    stale.unlink()
+
+    replacement = tmp_path / "replacement.sqlite3"
+    with closing(sqlite3.connect(replacement)) as connection:
+        connection.execute("CREATE TABLE probe(value INTEGER NOT NULL)")
+        connection.commit()
+
+    connection = driver.connect(replacement)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM probe").fetchone() == (0,)
+    finally:
+        connection.close()
+    assert replacement.read_bytes().startswith(_PLAINTEXT_HEADER)
 
 
 class RecoveryCancellingDatabase(FaultInjectingDatabase):
