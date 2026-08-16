@@ -1038,9 +1038,9 @@ are logged locally and wrapped in a generic Romanian message.
 - Pull requests and pushes to `main` run a read-only correctness workflow with
   Ruff, Pyright, the complete Linux-verifiable suite, both Qt transport/UI test
   orders, and `pip check`. A native Apple Silicon job installs the hash-locked
-  macOS graph, repeats Pyright against those platform dependencies, and runs
-  disposable-Keychain/SQLCipher tests, including a populated plaintext
-  conversion and installed-launcher encryption check.
+  macOS graph, repeats Pyright against those platform dependencies, and runs the
+  complete SQLCipher-backed suite, including disposable-Keychain tests, a
+  populated plaintext conversion, and an installed-launcher encryption check.
 - Build an Apple Silicon `.app` with PyInstaller.
 - Bundle styles, icons, and database migrations explicitly.
 - Create an unsigned `.dmg` containing the `.app` and Applications shortcut.
@@ -1051,7 +1051,9 @@ are logged locally and wrapped in a generic Romanian message.
   artifact and attaches the DMG, SHA-256 checksum, and CycloneDX SBOM to a draft
   release. It must refuse to replace an already-public release automatically.
   Every third-party action is pinned to a full commit SHA and checkout never
-  persists credentials.
+  persists credentials. The history scanner receives only the job's ephemeral
+  read-only token for authenticated API calls, with pull-request comments
+  disabled.
 - Document the first-launch Control-click/right-click `Open` workaround required
   by Gatekeeper for an unnotarized application.
 - Perform a clean-machine/fresh-database rehearsal before promoting the draft

@@ -92,6 +92,8 @@ def test_release_workflow_builds_on_arm64_macos() -> None:
     assert "needs: qt-lifecycle" in workflow
     assert "fetch-depth: 0" in workflow
     assert "gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+    assert "GITLEAKS_ENABLE_COMMENTS: false" in workflow
     sbom = workflow.split("      - name: Create checksum and dependency SBOM", maxsplit=1)[1]
     assert "--requirement requirements-macos.lock" in sbom
     assert "--disable-pip" in sbom
@@ -129,7 +131,9 @@ def test_premerge_workflow_runs_read_only_correctness_and_native_gates() -> None
     assert "runs-on: macos-15" in workflow
     assert "--require-hashes --only-binary=:all:" in workflow
     assert "python -m pyright --pythonversion 3.12" in macos_security
-    assert "python -m pytest -m macos_keychain" in macos_security
+    assert "Run complete macOS SQLCipher-backed gate" in macos_security
+    assert "run: python -m pytest\n" in macos_security
+    assert "python -m pytest -m macos_keychain" not in macos_security
     assert (
         ".venv/bin/python -m pip install --no-deps --no-build-isolation ."
         in workflow
@@ -193,6 +197,8 @@ def test_secret_scanning_covers_historical_tuya_device_identifiers() -> None:
     assert "[A-Za-z0-9]{22}" in config
     assert "fetch-depth: 0" in workflow
     assert "persist-credentials: false" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+    assert "GITLEAKS_ENABLE_COMMENTS: false" in workflow
 
 
 def test_security_audit_is_scoped_to_the_hash_locked_dependency_graph() -> None:

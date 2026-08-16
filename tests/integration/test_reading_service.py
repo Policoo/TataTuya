@@ -1,5 +1,4 @@
 import json
-import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +20,7 @@ from tatatuya.domain.models import (
     TuyaSettings,
 )
 from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.dbapi import dbapi
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.tuya.client import PreparedRequest, TuyaClient
@@ -403,7 +403,7 @@ def test_later_batch_database_failure_cannot_rollback_first_response(
     gateway = FakeGateway(
         [Device(f"meter-{index}", f"Contor {index}") for index in range(21)]
     )
-    with pytest.raises(sqlite3.IntegrityError, match="later capture failure"):
+    with pytest.raises(dbapi.IntegrityError, match="later capture failure"):
         with database.connect() as connection:
             devices = DeviceRepository(connection)
             service = ReadingService(

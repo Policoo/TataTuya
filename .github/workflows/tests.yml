@@ -114,7 +114,7 @@ jobs:
       - name: Run macOS dependency-aware type checks
         run: python -m pyright --pythonversion 3.12
 
-      - name: Run disposable native Keychain and SQLCipher checks
+      - name: Run complete macOS SQLCipher-backed gate
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -m macos_keychain
+        run: python -m pytest

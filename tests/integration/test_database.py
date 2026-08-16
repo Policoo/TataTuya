@@ -17,8 +17,9 @@ from tatatuya.domain.models import (
     Reading,
     TuyaSettings,
 )
-from tatatuya.infrastructure.database import Database
 from tatatuya.infrastructure import migrations
+from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.dbapi import dbapi
 from tatatuya.infrastructure.secrets import (
     MemorySecretStore,
     PlaintextFileSecretStore,
@@ -209,7 +210,7 @@ def test_failed_migration_is_atomic_and_can_be_retried(tmp_path, monkeypatch) ->
     broken = "CREATE TABLE partial_change(id INTEGER); CREATE TABLE invalid("
     monkeypatch.setattr(migrations, "MIGRATIONS", ((1, broken),))
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(dbapi.OperationalError):
         database.initialize()
 
     with database.connect() as connection:

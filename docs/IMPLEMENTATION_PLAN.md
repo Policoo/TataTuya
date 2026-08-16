@@ -646,7 +646,9 @@ Gate:
 - [x] Pin the reviewed macOS dependency graph with hashes and keep PySide6 on the
   fixed 6.11.1 line.
 - [x] SHA-pin third-party actions, isolate release write permission, disable
-  persisted checkout credentials, and publish checksums plus a CycloneDX SBOM.
+  persisted checkout credentials, authenticate history scanning with only an
+  ephemeral read-only token and no PR comments, and publish checksums plus a
+  CycloneDX SBOM.
 - [x] Add scheduled dependency auditing, Dependabot, and full-history secret
   scanning.
 - [x] Add deterministic conversion fault injection for cancellation and ordinary
@@ -656,9 +658,9 @@ Gate:
   copies when recovery restore itself fails, and retain a native populated-
   upgrade test in Apple Silicon CI.
 - [x] Run Ruff, Linux and macOS dependency-aware Pyright, the complete Linux-
-  verifiable suite, both Qt lifecycle orders, dependency consistency, and
-  disposable native Keychain/SQLCipher checks on pull requests and pushes to
-  `main` with read-only permissions.
+  verifiable suite, the complete Apple Silicon SQLCipher-backed suite, both Qt
+  lifecycle orders, dependency consistency, and disposable native Keychain
+  checks on pull requests and pushes to `main` with read-only permissions.
 - [x] Scope vulnerability audits and the release dependency SBOM to the exact
   hash-locked macOS graph so the unpublished local application package is not
   misclassified as an unauditable third-party dependency.
