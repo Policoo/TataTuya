@@ -97,7 +97,7 @@ jobs:
           python -m pyright --pythonversion 3.12
           python -m pytest
           python -m pip check
-          python -m pip_audit --strict
+          python -m pip_audit --strict --requirement requirements-macos.lock --disable-pip
 
       - name: Build ARM64 application
         run: ./scripts/build_macos.sh
@@ -108,7 +108,11 @@ jobs:
       - name: Create checksum and dependency SBOM
         run: |
           shasum -a 256 dist/TataTuya-*-arm64.dmg > "dist/TataTuya-${GITHUB_REF_NAME}-arm64.sha256"
-          python -m pip_audit --format cyclonedx-json --output "dist/TataTuya-${GITHUB_REF_NAME}-sbom.json"
+          python -m pip_audit \
+            --requirement requirements-macos.lock \
+            --disable-pip \
+            --format cyclonedx-json \
+            --output "dist/TataTuya-${GITHUB_REF_NAME}-sbom.json"
 
       - name: Upload verified release inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

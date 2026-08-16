@@ -218,6 +218,7 @@ class PlaintextFileSecretStore:
     def _open_existing(self, flags: int) -> int:
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
+        descriptor: int | None = None
         try:
             descriptor = os.open(self.path, flags)
             metadata = os.fstat(descriptor)
@@ -226,7 +227,7 @@ class PlaintextFileSecretStore:
             os.fchmod(descriptor, 0o600)
             return descriptor
         except OSError as exc:
-            if "descriptor" in locals():
+            if descriptor is not None:
                 os.close(descriptor)
             raise SecretStoreError("plaintext-read") from exc
 

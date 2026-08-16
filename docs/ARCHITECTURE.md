@@ -1038,17 +1038,20 @@ are logged locally and wrapped in a generic Romanian message.
 - Pull requests and pushes to `main` run a read-only correctness workflow with
   Ruff, Pyright, the complete Linux-verifiable suite, both Qt transport/UI test
   orders, and `pip check`. A native Apple Silicon job installs the hash-locked
-  macOS graph and runs only disposable-Keychain/SQLCipher tests, including a
-  populated plaintext conversion and installed-launcher encryption check.
+  macOS graph, repeats Pyright against those platform dependencies, and runs
+  disposable-Keychain/SQLCipher tests, including a populated plaintext
+  conversion and installed-launcher encryption check.
 - Build an Apple Silicon `.app` with PyInstaller.
 - Bundle styles, icons, and database migrations explicitly.
 - Create an unsigned `.dmg` containing the `.app` and Applications shortcut.
-- GitHub Actions installs the Python 3.12/macOS ARM64 hash lock, audits it,
-  tests, and builds with a read-only token. A separate publication job receives
-  `contents: write` only after downloading the verified artifact and attaches
-  the DMG, SHA-256 checksum, and CycloneDX SBOM to a draft release. It must
-  refuse to replace an already-public release automatically. Every third-party
-  action is pinned to a full commit SHA and checkout never persists credentials.
+- GitHub Actions installs the Python 3.12/macOS ARM64 hash lock, audits that
+  exact locked dependency graph without treating the locally built application
+  as a third-party package, tests, and builds with a read-only token. A separate
+  publication job receives `contents: write` only after downloading the verified
+  artifact and attaches the DMG, SHA-256 checksum, and CycloneDX SBOM to a draft
+  release. It must refuse to replace an already-public release automatically.
+  Every third-party action is pinned to a full commit SHA and checkout never
+  persists credentials.
 - Document the first-launch Control-click/right-click `Open` workaround required
   by Gatekeeper for an unnotarized application.
 - Perform a clean-machine/fresh-database rehearsal before promoting the draft

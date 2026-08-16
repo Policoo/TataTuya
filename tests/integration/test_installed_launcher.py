@@ -38,8 +38,7 @@ def test_installed_command_runs_outside_checkout(tmp_path) -> None:
         database_path = data_directory / "tatatuya.sqlite3"
         assert database_path.is_file()
         if sys.platform == "darwin":
-            from sqlcipher3 import dbapi2 as sqlcipher
-
+            from tatatuya.infrastructure.dbapi import dbapi as sqlcipher
             from tatatuya.infrastructure.secrets import (
                 DATABASE_KEY_ACCOUNT,
                 MacOSKeychainSecretStore,

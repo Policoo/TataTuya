@@ -123,9 +123,9 @@ Never place real credentials in source files, configuration files, or release
 artifacts.
 
 Pull requests and pushes to `main` also run read-only Linux correctness, both Qt
-test orders, and native Apple Silicon Keychain/SQLCipher checks before a release
-tag exists. Configure those jobs as required branch checks in the repository
-settings once their signal is stable.
+test orders, macOS dependency-aware type checks, and native Apple Silicon
+Keychain/SQLCipher checks before a release tag exists. Configure those jobs as
+required branch checks in the repository settings once their signal is stable.
 
 ### Clean-Mac release rehearsal
 

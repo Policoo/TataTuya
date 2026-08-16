@@ -655,9 +655,13 @@ Gate:
   integrity checks through the fresh recovery context, preserve both valid
   copies when recovery restore itself fails, and retain a native populated-
   upgrade test in Apple Silicon CI.
-- [x] Run Ruff, Pyright, the complete Linux-verifiable suite, both Qt lifecycle
-  orders, dependency consistency, and disposable native Keychain/SQLCipher
-  checks on pull requests and pushes to `main` with read-only permissions.
+- [x] Run Ruff, Linux and macOS dependency-aware Pyright, the complete Linux-
+  verifiable suite, both Qt lifecycle orders, dependency consistency, and
+  disposable native Keychain/SQLCipher checks on pull requests and pushes to
+  `main` with read-only permissions.
+- [x] Scope vulnerability audits and the release dependency SBOM to the exact
+  hash-locked macOS graph so the unpublished local application package is not
+  misclassified as an unauditable third-party dependency.
 - [ ] Rehearse fresh encrypted creation, populated plaintext upgrade, Keychain
   ACL behavior, wrong/missing key recovery, native linkage, and cancellation at
   both replacement boundaries on a clean Apple Silicon Mac.

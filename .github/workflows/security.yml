@@ -40,4 +40,4 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary=:all: -r requirements-macos.lock
           python -m pip check
-          python -m pip_audit --strict
+          python -m pip_audit --strict --requirement requirements-macos.lock --disable-pip

@@ -813,7 +813,7 @@ def test_blocked_verification_uses_progress_handler_for_cancellation(
 @pytest.mark.macos_keychain
 @pytest.mark.skipif(sys.platform != "darwin", reason="requires native SQLCipher")
 def test_native_sqlcipher_upgrades_populated_plaintext_database(tmp_path) -> None:
-    from sqlcipher3 import dbapi2 as sqlcipher  # type: ignore[import-not-found]
+    from tatatuya.infrastructure.dbapi import dbapi as sqlcipher
 
     path = tmp_path / "native-legacy.sqlite3"
     expected_snapshot = _create_populated_legacy_database(path)

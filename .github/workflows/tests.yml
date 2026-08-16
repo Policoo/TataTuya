@@ -111,6 +111,9 @@ jobs:
           .venv/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-macos.lock
           .venv/bin/python -m pip install --no-deps --no-build-isolation .
 
+      - name: Run macOS dependency-aware type checks
+        run: python -m pyright --pythonversion 3.12
+
       - name: Run disposable native Keychain and SQLCipher checks
         env:
           QT_QPA_PLATFORM: offscreen

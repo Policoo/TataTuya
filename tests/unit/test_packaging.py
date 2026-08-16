@@ -81,13 +81,21 @@ def test_release_workflow_builds_on_arm64_macos() -> None:
         in workflow
     )
     assert "python -m pyright --pythonversion 3.12" in workflow
-    assert "python -m pip_audit --strict" in workflow
+    assert (
+        "python -m pip_audit --strict --requirement requirements-macos.lock "
+        "--disable-pip"
+    ) in workflow
+    assert "python -m pip_audit --strict\n" not in workflow
     assert "qt-lifecycle:" in workflow
     assert "tests/unit/test_tuya_client.py tests/ui/test_main_window.py" in workflow
     assert "tests/ui/test_main_window.py tests/unit/test_tuya_client.py" in workflow
     assert "needs: qt-lifecycle" in workflow
     assert "fetch-depth: 0" in workflow
     assert "gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e" in workflow
+    sbom = workflow.split("      - name: Create checksum and dependency SBOM", maxsplit=1)[1]
+    assert "--requirement requirements-macos.lock" in sbom
+    assert "--disable-pip" in sbom
+    assert "--format cyclonedx-json" in sbom
 
 
 def test_release_workflow_only_updates_draft_releases() -> None:
@@ -105,6 +113,7 @@ def test_premerge_workflow_runs_read_only_correctness_and_native_gates() -> None
     workflow = (
         PROJECT_ROOT / ".github" / "workflows" / "tests.yml"
     ).read_text(encoding="utf-8")
+    macos_security = workflow.split("  macos-security:", maxsplit=1)[1]
 
     assert "pull_request:" in workflow
     assert "branches: [main]" in workflow
@@ -119,7 +128,8 @@ def test_premerge_workflow_runs_read_only_correctness_and_native_gates() -> None
     assert "tests/ui/test_main_window.py tests/unit/test_tuya_client.py" in workflow
     assert "runs-on: macos-15" in workflow
     assert "--require-hashes --only-binary=:all:" in workflow
-    assert "python -m pytest -m macos_keychain" in workflow
+    assert "python -m pyright --pythonversion 3.12" in macos_security
+    assert "python -m pytest -m macos_keychain" in macos_security
     assert (
         ".venv/bin/python -m pip install --no-deps --no-build-isolation ."
         in workflow
@@ -134,6 +144,15 @@ def test_packaging_dependencies_are_declared() -> None:
     assert any(item.startswith("pyinstaller") for item in optional["package"])
     assert any(item.startswith("pyright") for item in optional["dev"])
     assert any(item.startswith("sqlcipher3==") for item in metadata["project"]["dependencies"])
+
+
+def test_pyright_checks_sources_without_generated_build_copies() -> None:
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as project_file:
+        metadata = tomllib.load(project_file)
+
+    pyright = metadata["tool"]["pyright"]
+    assert pyright["include"] == ["src", "tests", "scripts"]
+    assert pyright["exclude"] == ["build", "dist"]
 
 
 def test_release_publication_job_does_not_execute_repository_code() -> None:
@@ -174,6 +193,18 @@ def test_secret_scanning_covers_historical_tuya_device_identifiers() -> None:
     assert "[A-Za-z0-9]{22}" in config
     assert "fetch-depth: 0" in workflow
     assert "persist-credentials: false" in workflow
+
+
+def test_security_audit_is_scoped_to_the_hash_locked_dependency_graph() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "security.yml"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "python -m pip_audit --strict --requirement requirements-macos.lock "
+        "--disable-pip"
+    ) in workflow
+    assert "python -m pip_audit --strict\n" not in workflow
 
 
 def test_developer_facing_release_text_has_no_romanian_diacritics() -> None:

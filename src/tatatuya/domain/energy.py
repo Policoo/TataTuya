@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Never
 
 from tatatuya.domain.errors import UserFacingError
 
@@ -128,7 +128,7 @@ def normalize_energy(raw_value: Any, scale: int, unit: str) -> Decimal:
     return normalized
 
 
-def _raise_invalid_value(raw_value: Any) -> None:
+def _raise_invalid_value(raw_value: Any) -> Never:
     raise UserFacingError(
         "Citire invalidă",
         "Valoarea de energie primită de la Tuya nu este numerică.",
@@ -136,7 +136,7 @@ def _raise_invalid_value(raw_value: Any) -> None:
     )
 
 
-def _raise_oversized_value() -> None:
+def _raise_oversized_value() -> Never:
     raise UserFacingError(
         "Citire invalidă",
         "Valoarea de energie primită de la Tuya depășește limitele acceptate.",
