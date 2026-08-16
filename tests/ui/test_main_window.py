@@ -24,7 +24,11 @@ from tatatuya.domain.models import (
     TuyaSettings,
 )
 from tatatuya.infrastructure.database import Database
-from tatatuya.infrastructure.secrets import MemorySecretStore, SecretStoreError
+from tatatuya.infrastructure.secrets import (
+    TUYA_CLIENT_SECRET_ACCOUNT,
+    MemorySecretStore,
+    SecretStoreError,
+)
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import SettingsRepository
@@ -143,20 +147,38 @@ def test_local_bootstrap_and_billing_survive_unavailable_client_secret(
             )
         )
 
-    class DeniedStore:
+    class DeniedClientSecretStore:
         def get(self, account, cancellation=None):
-            raise SecretStoreError("read", -25308)
+            if account == TUYA_CLIENT_SECRET_ACCOUNT:
+                raise SecretStoreError("read", -25308)
+            return initial_store.get(account, cancellation)
 
         def set(self, account, value, *, label, cancellation=None):
-            raise SecretStoreError("write", -25308)
+            if account == TUYA_CLIENT_SECRET_ACCOUNT:
+                raise SecretStoreError("write", -25308)
+            initial_store.set(
+                account,
+                value,
+                label=label,
+                cancellation=cancellation,
+            )
 
         def set_if_absent(self, account, value, *, label, cancellation=None):
-            raise SecretStoreError("write", -25308)
+            if account == TUYA_CLIENT_SECRET_ACCOUNT:
+                raise SecretStoreError("write", -25308)
+            return initial_store.set_if_absent(
+                account,
+                value,
+                label=label,
+                cancellation=cancellation,
+            )
 
         def delete(self, account, cancellation=None):
-            raise SecretStoreError("delete", -25308)
+            if account == TUYA_CLIENT_SECRET_ACCOUNT:
+                raise SecretStoreError("delete", -25308)
+            initial_store.delete(account, cancellation)
 
-    restarted = Database(path, secret_store=DeniedStore())
+    restarted = Database(path, secret_store=DeniedClientSecretStore())
     state = _load_initial_state(restarted)
     calculation = _prepare_calculation(restarted, "meter-1")
 
