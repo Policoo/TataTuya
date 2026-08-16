@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from tatatuya.domain.models import Device
 from tatatuya.services.reading_service import StatusCaptureResult
 from tatatuya.ui import text
+from tatatuya.ui.plain_text import plain_text_label, set_plain_text
 from tatatuya.ui.formatters import format_energy
 
 
@@ -47,12 +48,12 @@ class DeviceStatusDialog(QDialog):
         title = QLabel(text.DEVICE_STATUS_TITLE)
         title.setObjectName("ModalTitle")
         layout.addWidget(title)
-        meter = QLabel(device.name)
+        meter = plain_text_label(device.name)
         meter.setObjectName("HistoryMeter")
         meter.setWordWrap(True)
         layout.addWidget(meter)
 
-        self.capture_feedback = QLabel()
+        self.capture_feedback = plain_text_label()
         self.capture_feedback.setObjectName("StatusCaptureFeedback")
         self.capture_feedback.setWordWrap(True)
         layout.addWidget(self.capture_feedback)
@@ -118,7 +119,8 @@ class DeviceStatusDialog(QDialog):
     def _show_capture_result(self) -> None:
         if self.capture_result.reading is not None:
             self.capture_feedback.setProperty("state", "success")
-            self.capture_feedback.setText(
+            set_plain_text(
+                self.capture_feedback,
                 text.STATUS_READING_SAVED.format(
                     reading=format_energy(self.capture_result.reading.value_kwh)
                 )
@@ -126,14 +128,15 @@ class DeviceStatusDialog(QDialog):
             return
         if self.capture_result.capture_error is not None:
             self.capture_feedback.setProperty("state", "warning")
-            self.capture_feedback.setText(
+            set_plain_text(
+                self.capture_feedback,
                 text.STATUS_READING_NOT_SAVED.format(
                     message=self.capture_result.capture_error.message
                 )
             )
             return
         self.capture_feedback.setProperty("state", "neutral")
-        self.capture_feedback.setText(text.STATUS_WITHOUT_READING)
+        set_plain_text(self.capture_feedback, text.STATUS_WITHOUT_READING)
 
 
 def format_status_value(value: object) -> str:

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.ui import text
+from tatatuya.ui.plain_text import plain_text_label
 
 
 class ErrorDialog(QDialog):
@@ -57,10 +58,10 @@ class ErrorDialog(QDialog):
         message_layout = QVBoxLayout()
         message_layout.setContentsMargins(0, 0, 0, 0)
         message_layout.setSpacing(6)
-        title = QLabel(error.title)
+        title = plain_text_label(error.title)
         title.setObjectName("ErrorTitle")
         title.setWordWrap(True)
-        message = QLabel(error.message)
+        message = plain_text_label(error.message)
         message.setObjectName("ErrorMessage")
         message.setWordWrap(True)
         message.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

@@ -1,10 +1,13 @@
 import json
 from decimal import Decimal
-from email.message import Message
+from http.client import HTTPMessage
 from io import BytesIO
 from pathlib import Path
+import threading
+import time
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request
 
 import pytest
 
@@ -15,9 +18,11 @@ from tatatuya.infrastructure.tuya.client import (
     BodyLimits,
     BoundedPayload,
     PreparedRequest,
+    QtNetworkTransport,
     TuyaAPIError,
     TuyaClient,
     UrllibTransport,
+    _RejectRedirects,
 )
 
 
@@ -46,6 +51,87 @@ def client_with(transport: FakeTransport) -> TuyaClient:
     client = TuyaClient(SETTINGS, transport=transport, clock_ms=lambda: "1721124000000")
     client.access_token = "token-value"
     return client
+
+
+def test_default_client_uses_abortable_qt_transport() -> None:
+    client = TuyaClient(SETTINGS)
+
+    assert isinstance(client.transport, QtNetworkTransport)
+
+
+def test_qt_transport_rejects_non_read_only_request_before_network() -> None:
+    request = PreparedRequest(
+        "POST",
+        "https://openapi.tuyaeu.com/v1.0/devices/meter-1/commands",
+        {},
+        b"{}",
+        {},
+        allowed_origin="https://openapi.tuyaeu.com",
+    )
+
+    with pytest.raises(TuyaAPIError, match="non-read-only"):
+        QtNetworkTransport().send(request)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_qt_transport_aborts_stalled_tls_inside_absolute_bound(cancel) -> None:
+    from PySide6.QtCore import QByteArray, QObject, Signal
+    from PySide6.QtNetwork import QNetworkReply
+
+    class StalledReply(QObject):
+        readyRead = Signal()
+        finished = Signal()
+
+        def abort(self):
+            self.finished.emit()
+
+        def readAll(self):
+            return QByteArray()
+
+        def attribute(self, name):
+            return None
+
+        def error(self):
+            return QNetworkReply.NetworkError.NoError
+
+        def rawHeader(self, name):
+            return QByteArray()
+
+    reply = StalledReply()
+
+    class Manager:
+        def get(self, request):
+            return reply
+
+    context = CancellationContext(5)
+    cancellation_timer = None
+    if cancel:
+        cancellation_timer = threading.Timer(0.1, context.cancel)
+        cancellation_timer.start()
+    started = time.monotonic()
+    origin = "https://openapi.tuyaeu.com"
+    request = PreparedRequest(
+        "GET",
+        f"{origin}/v1.0/token",
+        {},
+        b"",
+        {},
+        timeout_seconds=1,
+        allowed_origin=origin,
+        cancellation=context,
+        deadline_monotonic=time.monotonic() + (1 if cancel else 0.15),
+    )
+    try:
+        expected_error = UserFacingError if cancel else TuyaAPIError
+        with pytest.raises(expected_error):
+            QtNetworkTransport(
+                timeout_seconds=1,
+                manager_factory=Manager,
+            ).send(request)
+        assert time.monotonic() - started < 1
+    finally:
+        if cancellation_timer is not None:
+            cancellation_timer.cancel()
 
 
 def test_endpoints_use_settings_and_return_typed_values() -> None:
@@ -115,6 +201,324 @@ def test_device_list_follows_cursor_pages_and_deduplicates_ids() -> None:
     assert second_query == {"size": ["20"], "last_row_key": ["cursor-1"]}
 
 
+def test_device_listing_stops_at_explicit_page_limit() -> None:
+    transport = FakeTransport(
+        [
+            {
+                "success": True,
+                "result": {
+                    "devices": [],
+                    "has_more": True,
+                    "last_row_key": f"cursor-{index}",
+                },
+            }
+            for index in range(50)
+        ]
+    )
+
+    with pytest.raises(TuyaAPIError, match="50 pages"):
+        client_with(transport).list_devices()
+
+    assert len(transport.requests) == 50
+
+
+def test_device_listing_cancellation_starts_no_later_page() -> None:
+    cancellation = CancellationContext(30)
+
+    class CancelAfterFirstPage(FakeTransport):
+        def send(self, request):
+            response = super().send(request)
+            cancellation.cancel()
+            return response
+
+    transport = CancelAfterFirstPage(
+        [
+            {
+                "success": True,
+                "result": {
+                    "devices": [],
+                    "has_more": True,
+                    "last_row_key": "next",
+                },
+            }
+        ]
+    )
+    client = TuyaClient(
+        SETTINGS,
+        transport=transport,
+        cancellation=cancellation,
+        clock_ms=lambda: "1721124000000",
+    )
+    client.access_token = "token-value"
+
+    with pytest.raises(UserFacingError, match="anulată"):
+        client.list_devices()
+
+    assert len(transport.requests) == 1
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_transport_rejects_redirect_without_opening_target(code) -> None:
+    class RedirectingOpener:
+        calls = 0
+
+        def open(self, request, timeout):
+            self.calls += 1
+            raise HTTPError(
+                request.full_url,
+                code,
+                "redirect",
+                HTTPMessage(),
+                BytesIO(b"redirect body"),
+            )
+
+    opener = RedirectingOpener()
+    request = PreparedRequest(
+        "GET",
+        "https://openapi.tuyaeu.com/v1.0/token",
+        {"client_id": "sentinel-client", "sign": "sentinel-sign"},
+        b"",
+        {"method": "GET", "region": "central_europe"},
+        allowed_origin="https://openapi.tuyaeu.com",
+    )
+
+    with pytest.raises(TuyaAPIError, match="redirect") as caught:
+        UrllibTransport(opener=opener).send(request)
+
+    assert opener.calls == 1
+    rendered = repr((str(caught.value), caught.value.response_payload))
+    assert "sentinel-client" not in rendered
+    assert "sentinel-sign" not in rendered
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_redirect_handler_never_constructs_follow_up_request(code) -> None:
+    handler = _RejectRedirects()
+    request = Request("https://openapi.tuyaeu.com/v1.0/token")
+    assert (
+        handler.redirect_request(
+            request,
+            BytesIO(),
+            code,
+            "",
+            HTTPMessage(),
+            "https://evil.test",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("code", [301, 302, 303, 307, 308])
+def test_qt_transport_rejects_redirect_without_follow_up(code) -> None:
+    from PySide6.QtCore import QByteArray, QObject, QTimer, Signal
+    from PySide6.QtNetwork import QNetworkReply, QNetworkRequest
+
+    class RedirectReply(QObject):
+        readyRead = Signal()
+        finished = Signal()
+
+        def abort(self):
+            self.finished.emit()
+
+        def readAll(self):
+            return QByteArray()
+
+        def attribute(self, name):
+            if name == QNetworkRequest.Attribute.HttpStatusCodeAttribute:
+                return code
+            return None
+
+        def error(self):
+            return QNetworkReply.NetworkError.NoError
+
+        def rawHeader(self, name):
+            return QByteArray()
+
+    reply = RedirectReply()
+
+    class Manager:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, request):
+            self.calls += 1
+            QTimer.singleShot(0, reply.finished.emit)
+            return reply
+
+    manager = Manager()
+    request = PreparedRequest(
+        "GET",
+        "https://openapi.tuyaeu.com/v1.0/token",
+        {"client_id": "sentinel-client", "sign": "sentinel-sign"},
+        b"",
+        {},
+        allowed_origin="https://openapi.tuyaeu.com",
+    )
+
+    with pytest.raises(TuyaAPIError, match="redirect") as caught:
+        QtNetworkTransport(manager_factory=lambda: manager).send(request)
+
+    assert manager.calls == 1
+    assert "sentinel" not in str(caught.value)
+
+
+def _streaming_qt_reply(status, chunks, headers=None):
+    from PySide6.QtCore import QByteArray, QObject, QTimer, Signal
+    from PySide6.QtNetwork import QNetworkReply, QNetworkRequest
+
+    class StreamingReply(QObject):
+        metaDataChanged = Signal()
+        readyRead = Signal()
+        finished = Signal()
+
+        def __init__(self):
+            super().__init__()
+            self.pending = QByteArray()
+            self.chunks = list(chunks)
+            self.headers = dict(headers or {})
+            self.aborted = False
+            self.bytes_read = 0
+
+        def start(self):
+            self.metaDataChanged.emit()
+            if self.aborted:
+                return
+            self._next()
+
+        def _next(self):
+            if self.aborted:
+                return
+            if not self.chunks:
+                self.finished.emit()
+                return
+            self.pending = QByteArray(self.chunks.pop(0))
+            self.readyRead.emit()
+            QTimer.singleShot(0, self._next)
+
+        def abort(self):
+            if not self.aborted:
+                self.aborted = True
+                self.finished.emit()
+
+        def readAll(self):
+            value = self.pending
+            self.pending = QByteArray()
+            self.bytes_read += value.size()
+            return value
+
+        def attribute(self, name):
+            if name == QNetworkRequest.Attribute.HttpStatusCodeAttribute:
+                return status
+            return None
+
+        def error(self):
+            return QNetworkReply.NetworkError.NoError
+
+        def rawHeader(self, name):
+            return QByteArray(self.headers.get(str(name), b""))
+
+    reply = StreamingReply()
+
+    class Manager:
+        def get(self, request):
+            del request
+            QTimer.singleShot(0, reply.start)
+            return reply
+
+    return reply, Manager
+
+
+def _qt_request() -> PreparedRequest:
+    origin = "https://openapi.tuyaeu.com"
+    return PreparedRequest(
+        "GET",
+        f"{origin}/v1.0/token",
+        {},
+        b"",
+        {},
+        allowed_origin=origin,
+    )
+
+
+@pytest.mark.parametrize("status, message", [(500, "too large"), (302, "redirect")])
+def test_qt_transport_caps_streamed_error_and_redirect_bodies_immediately(
+    status, message
+) -> None:
+    chunks = [b"x" * 8192 for _ in range(100)]
+    reply, manager = _streaming_qt_reply(status, chunks)
+
+    with pytest.raises(TuyaAPIError, match=message):
+        QtNetworkTransport(manager_factory=manager).send_bounded(
+            _qt_request(), BodyLimits(1_048_576, 1_048_576)
+        )
+
+    assert reply.aborted
+    assert reply.bytes_read <= 65_536 + 8192
+    assert reply.chunks
+
+
+def test_qt_transport_rejects_declared_oversize_error_before_body_read() -> None:
+    reply, manager = _streaming_qt_reply(
+        500,
+        [b"must-not-be-read"],
+        {"Content-Length": b"65537"},
+    )
+
+    with pytest.raises(TuyaAPIError, match="too large"):
+        QtNetworkTransport(manager_factory=manager).send_bounded(
+            _qt_request(), BodyLimits(1_048_576, 1_048_576)
+        )
+
+    assert reply.aborted
+    assert reply.bytes_read == 0
+
+
+def test_qt_transport_accepts_success_body_above_error_cap_at_exact_limit() -> None:
+    body = b'{"value":"' + (b"x" * 69_988) + b'"}'
+    assert len(body) == 70_000
+    reply, manager = _streaming_qt_reply(
+        200,
+        [body[:35_000], body[35_000:]],
+        {"Content-Length": b"70000", "Content-Encoding": b"identity"},
+    )
+
+    payload = QtNetworkTransport(manager_factory=manager).send_bounded(
+        _qt_request(), BodyLimits(70_000, 70_000)
+    )
+
+    assert payload.raw_bytes == 70_000
+    assert payload.decoded_characters == 70_000
+    assert len(payload.payload["value"]) == 69_988
+    assert not reply.aborted
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://openapi.tuyaeu.com/v1.0/token",
+        "https://user@openapi.tuyaeu.com/v1.0/token",
+        "https://openapi.tuyaeu.com/v1.0/token#fragment",
+        "https://evil.test/v1.0/token",
+        "https://openapi.tuyaeu.com:444/v1.0/token",
+    ],
+)
+def test_transport_rejects_noncanonical_tuya_origin_before_open(url) -> None:
+    class NeverOpen:
+        def open(self, request, timeout):
+            raise AssertionError("unsafe URL reached the network opener")
+
+    request = PreparedRequest(
+        "GET",
+        url,
+        {},
+        b"",
+        {},
+        allowed_origin="https://openapi.tuyaeu.com",
+    )
+    with pytest.raises(TuyaAPIError, match="security validation"):
+        UrllibTransport(opener=NeverOpen()).send(request)
+
+
 def test_http_transport_parses_fractional_numbers_as_decimal(monkeypatch) -> None:
     raw = (FIXTURES / "individual_status_decimal.json").read_bytes()
 
@@ -132,7 +536,7 @@ def test_http_transport_parses_fractional_numbers_as_decimal(monkeypatch) -> Non
             return self.body.read(size)
 
     monkeypatch.setattr(
-        "tatatuya.infrastructure.tuya.client.urlopen",
+        "tatatuya.infrastructure.tuya.client._open_no_redirect",
         lambda request, timeout: Response(),
     )
     payload = UrllibTransport().send(
@@ -141,6 +545,89 @@ def test_http_transport_parses_fractional_numbers_as_decimal(monkeypatch) -> Non
     value = payload["result"][0]["value"]
     assert value == Decimal("0.12345678901234567890123456789")
     assert isinstance(value, Decimal)
+
+
+def test_transport_connect_timeout_uses_absolute_time_remaining(monkeypatch) -> None:
+    observed: list[float] = []
+
+    class Response:
+        headers = {}
+
+        def __init__(self):
+            self.body = BytesIO(b'{"result": {}}')
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            return self.body.read(size)
+
+    monkeypatch.setattr(
+        "tatatuya.infrastructure.tuya.client.time.monotonic", lambda: 95.0
+    )
+
+    class Opener:
+        def open(self, request, timeout):
+            observed.append(timeout)
+            return Response()
+
+    request = PreparedRequest(
+        "GET",
+        "https://openapi.tuyaeu.com/v1.0/token",
+        {},
+        b"",
+        {},
+        timeout_seconds=30,
+        allowed_origin="https://openapi.tuyaeu.com",
+        deadline_monotonic=100.0,
+    )
+    UrllibTransport(timeout_seconds=30, opener=Opener()).send(request)
+
+    assert observed == [5.0]
+
+
+def test_cancellation_during_body_read_stops_before_another_read(monkeypatch) -> None:
+    cancellation = CancellationContext(30)
+
+    class Response:
+        headers = {}
+
+        def __init__(self):
+            self.read_count = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            self.read_count += 1
+            cancellation.cancel()
+            return b"{"
+
+    response = Response()
+    monkeypatch.setattr(
+        "tatatuya.infrastructure.tuya.client._open_no_redirect",
+        lambda request, timeout: response,
+    )
+    request = PreparedRequest(
+        "GET",
+        "https://openapi.tuyaeu.com/v1.0/token",
+        {},
+        b"",
+        {},
+        allowed_origin="https://openapi.tuyaeu.com",
+        cancellation=cancellation,
+    )
+
+    with pytest.raises(UserFacingError, match="anulată"):
+        UrllibTransport().send(request)
+
+    assert response.read_count == 1
 
 
 def test_http_json_error_body_is_structured_and_redacted(monkeypatch) -> None:
@@ -153,9 +640,11 @@ def test_http_json_error_body_is_structured_and_redacted(monkeypatch) -> None:
     ).encode()
 
     def fail(request, timeout):
-        raise HTTPError(request.full_url, 400, "Bad Request", Message(), BytesIO(body))
+        raise HTTPError(
+            request.full_url, 400, "Bad Request", HTTPMessage(), BytesIO(body)
+        )
 
-    monkeypatch.setattr("tatatuya.infrastructure.tuya.client.urlopen", fail)
+    monkeypatch.setattr("tatatuya.infrastructure.tuya.client._open_no_redirect", fail)
     client = TuyaClient(SETTINGS, transport=UrllibTransport())
     client.access_token = "token-value"
     with pytest.raises(TuyaAPIError) as caught:
@@ -172,12 +661,14 @@ def test_http_json_error_discards_extreme_decimal_without_fixed_rendering(
     body = b'{"msg":"failed","measurement":1e-100000}'
 
     def fail(request, timeout):
-        raise HTTPError(request.full_url, 400, "Bad Request", Message(), BytesIO(body))
+        raise HTTPError(
+            request.full_url, 400, "Bad Request", HTTPMessage(), BytesIO(body)
+        )
 
     def unexpected_format(*args, **kwargs):
         raise AssertionError("fixed rendering must not run")
 
-    monkeypatch.setattr("tatatuya.infrastructure.tuya.client.urlopen", fail)
+    monkeypatch.setattr("tatatuya.infrastructure.tuya.client._open_no_redirect", fail)
     monkeypatch.setattr(
         "tatatuya.domain.energy.format", unexpected_format, raising=False
     )
@@ -223,9 +714,11 @@ def test_http_non_json_error_body_does_not_retain_opaque_content(monkeypatch) ->
     body = b"upstream debug output with unknown-api-key-value"
 
     def fail(request, timeout):
-        raise HTTPError(request.full_url, 502, "Bad Gateway", Message(), BytesIO(body))
+        raise HTTPError(
+            request.full_url, 502, "Bad Gateway", HTTPMessage(), BytesIO(body)
+        )
 
-    monkeypatch.setattr("tatatuya.infrastructure.tuya.client.urlopen", fail)
+    monkeypatch.setattr("tatatuya.infrastructure.tuya.client._open_no_redirect", fail)
     client = TuyaClient(SETTINGS, transport=UrllibTransport())
     client.access_token = "token-value"
     with pytest.raises(TuyaAPIError) as caught:
@@ -255,7 +748,7 @@ def test_bounded_transport_rejects_declared_oversize_before_read(monkeypatch) ->
 
     response = Response()
     monkeypatch.setattr(
-        "tatatuya.infrastructure.tuya.client.urlopen",
+        "tatatuya.infrastructure.tuya.client._open_no_redirect",
         lambda request, timeout: response,
     )
     with pytest.raises(TuyaAPIError, match="too large"):
@@ -286,7 +779,7 @@ def test_bounded_transport_rejects_streamed_oversize_and_invalid_utf8(
 
     responses = iter((Response(b"{" + b"x" * 100), Response(b"\xff")))
     monkeypatch.setattr(
-        "tatatuya.infrastructure.tuya.client.urlopen",
+        "tatatuya.infrastructure.tuya.client._open_no_redirect",
         lambda request, timeout: next(responses),
     )
     request = PreparedRequest("GET", "https://example.test", {}, b"", {})
@@ -319,7 +812,7 @@ def test_bounded_transport_never_falls_back_to_parameterless_read(monkeypatch) -
 
     response = Response()
     monkeypatch.setattr(
-        "tatatuya.infrastructure.tuya.client.urlopen",
+        "tatatuya.infrastructure.tuya.client._open_no_redirect",
         lambda request, timeout: response,
     )
 
@@ -441,6 +934,41 @@ def test_report_log_request_uses_current_read_only_v21_endpoint_and_exact_query(
     }
     assert page.raw_bytes == 100
     assert page.payload == {"hasMore": False}
+
+
+def test_report_log_page_removes_sensitive_fields_and_known_values() -> None:
+    class BoundedTransport(FakeTransport):
+        def send_bounded(self, request, limits):
+            self.requests.append(request)
+            return BoundedPayload(
+                {
+                    "success": True,
+                    "result": {
+                        "hasMore": False,
+                        "refreshToken": "remote-token",
+                        "diagnostic": "super-secret token-value",
+                    },
+                },
+                100,
+                100,
+            )
+
+    client = client_with(BoundedTransport([]))
+    page = client.get_report_log_page(
+        "meter-1",
+        "forward_energy_total",
+        1000,
+        2000,
+        last_row_key=None,
+        size=99,
+        raw_allowance=1000,
+        decoded_allowance=1000,
+    )
+
+    rendered = repr(page.payload)
+    assert "super-secret" not in rendered
+    assert "token-value" not in rendered
+    assert "remote-token" not in rendered
 
 
 def test_diagnostics_and_errors_do_not_expose_secret_or_token() -> None:

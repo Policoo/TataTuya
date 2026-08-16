@@ -45,9 +45,10 @@ Acceptance:
 - Scale 0, 2, and 3 tests pass.
 - Reset meters and invalid prices produce explicit user-facing failures.
 
-## Phase 3: SQLite persistence
+## Phase 3: local persistence
 
-- [x] Implement application database creation and connection handling.
+- [x] Implement application database creation and connection handling (later
+  upgraded to SQLCipher in Phase 14).
 - [x] Add versioned migrations for settings, devices, preferences, readings, and
   calculations.
 - [x] Implement repository interfaces and SQLite implementations.
@@ -58,7 +59,8 @@ Acceptance:
 Acceptance:
 
 - A new database initializes automatically.
-- Restart tests preserve credentials/settings, devices, readings, and calculations.
+- Restart tests preserve non-secret settings, platform-backed credentials,
+  devices, readings, and calculations.
 - Equal consecutive readings are stored as separate records.
 - Calculations remain unchanged after currency/settings changes.
 
@@ -596,6 +598,84 @@ Gate:
 - The original refresh/status capture and local calculation workflows pass
   unchanged alongside daily cloud import and unified calculation.
 - A release artifact contains no credentials or captured personal/device data.
+
+## Phase 14: Security remediation
+
+- [x] Reject every redirect and validate the exact HTTPS Tuya regional origin
+  before constructing a credential-bearing request.
+- [x] Bound associated-device discovery to 50 pages and 5,000 unique devices,
+  with cancellation checks between pages.
+- [x] Pass the Settings connection-test cancellation context into `TuyaClient`
+  and use the documented 30-second workflow deadline.
+- [x] Use an abortable Qt Network transport so the absolute request deadline
+  covers resolver, connect, TLS, headers, and bounded body reads.
+- [x] Canonicalize diagnostic key names and conservatively redact secret, token,
+  password, credential, authorization, and local-key variants.
+- [x] Force remote/user/error QLabel content to `Qt.PlainText` with external
+  links disabled.
+- [x] Move the Tuya Client Secret to macOS Keychain and keep it out of SQLite,
+  Qt fields, and signals.
+- [x] Require SQLCipher on production macOS, keep the random 256-bit database key
+  in a separate Keychain item, and implement fail-closed legacy conversion.
+- [x] Enforce `0700` application-directory and `0600` database/sidecar/log/
+  temporary permissions without following symlinks.
+- [x] Serialize database classification, key creation, recovery, conversion,
+  initial migration, and integrity checks with a bounded interprocess lock.
+- [x] Make Client Secret an optional remote capability so credential-backend
+  failures do not block cached rows, History, currency, or billing.
+- [x] Thread cancellation through database preparation and composite Settings
+  persistence, including SQLite/SQLCipher progress interruption and rollback.
+- [x] Keep the migration temporary inode at `0600`, write crash state before
+  export, and recover or remove its journal/WAL sidecars.
+- [x] Select Qt response limits from HTTP metadata before draining bodies, with
+  the 64 KiB budget applied immediately to errors and redirects.
+- [x] Render untrusted device diagnostics literally in tooltips and remove the
+  redundant device-name tooltip.
+- [x] Use persistent ordinary SQLite plus an explicit plaintext secret artifact
+  for Linux/POSIX development outside macOS, explicitly reject Windows, and
+  keep macOS production fail-closed.
+- [x] Isolate ordinary pytest runs from the production Keychain namespace and
+  require unique disposable services for native macOS tests and smoke runs.
+- [x] Execute Security-framework operations in a bounded helper process and
+  propagate cancellation through every conversion snapshot, probe, integrity
+  check, and a separate five-second safety-recovery budget.
+- [x] Install the checked-out package in the macOS release job and validate the
+  installed launcher through SQLCipher plus a disposable Keychain service.
+- [x] Create one session-owned `QApplication` for transport and UI tests so test
+  order cannot leave an incompatible `QCoreApplication` singleton.
+- [x] Pin the reviewed macOS dependency graph with hashes and keep PySide6 on the
+  fixed 6.11.1 line.
+- [x] SHA-pin third-party actions, isolate release write permission, disable
+  persisted checkout credentials, and publish checksums plus a CycloneDX SBOM.
+- [x] Add scheduled dependency auditing, Dependabot, and full-history secret
+  scanning.
+- [x] Add deterministic conversion fault injection for cancellation and ordinary
+  failure across credential, snapshot, export, verification, replacement,
+  cleanup, and safety-recovery boundaries. Exercise blocked foreign-key and
+  integrity checks through the fresh recovery context, preserve both valid
+  copies when recovery restore itself fails, and retain a native populated-
+  upgrade test in Apple Silicon CI.
+- [x] Run Ruff, Pyright, the complete Linux-verifiable suite, both Qt lifecycle
+  orders, dependency consistency, and disposable native Keychain/SQLCipher
+  checks on pull requests and pushes to `main` with read-only permissions.
+- [ ] Rehearse fresh encrypted creation, populated plaintext upgrade, Keychain
+  ACL behavior, wrong/missing key recovery, native linkage, and cancellation at
+  both replacement boundaries on a clean Apple Silicon Mac.
+- [ ] Privately determine whether the historical device identifier is real and
+  coordinate rotation/re-pairing and history cleanup if required.
+
+Acceptance:
+
+- A copied production database and sidecars are unreadable without the Keychain
+  database key, and a missing/wrong/denied key never creates a replacement.
+- The logical settings table and all UI signals omit the Tuya Client Secret.
+- Redirects create exactly one request and disclose no Tuya authentication
+  header to a target.
+- Build/test code never runs with a repository-write token.
+- Every injected conversion cancellation/failure retains a reopenable source or
+  encrypted database and restart reproduces the pre-conversion schema and rows.
+- Public release remains blocked until both manual items above and the clean-Mac
+  release rehearsal pass.
 
 ## Future extensions
 

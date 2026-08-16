@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from tatatuya.domain.energy import canonical_decimal
 from tatatuya.domain.models import Reading
+from tatatuya.infrastructure.dbapi import dbapi as sqlite3
 from tatatuya.infrastructure.repositories._mapping import from_utc_text, to_utc_text
 
 
 class ReadingRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: Any) -> None:
         self.connection = connection
 
     def add(self, reading: Reading) -> Reading:
@@ -205,7 +206,7 @@ class ReadingRepository:
         return {str(row["device_id"]): _map_reading(row) for row in rows}
 
 
-def _map_reading(row: sqlite3.Row) -> Reading:
+def _map_reading(row: Any) -> Reading:
     return Reading(
         id=row["id"],
         device_id=row["device_id"],

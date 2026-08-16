@@ -23,7 +23,12 @@ analysis = Analysis(
     pathex=[str(SOURCE_ROOT)],
     binaries=[],
     datas=DATA_FILES,
-    hiddenimports=["tatatuya.infrastructure.migrations"],
+    hiddenimports=[
+        "tatatuya.infrastructure.migrations",
+        "PySide6.QtNetwork",
+        "sqlcipher3.dbapi2",
+        "Security",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

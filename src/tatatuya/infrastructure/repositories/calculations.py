@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from tatatuya.domain.energy import canonical_decimal
 from tatatuya.domain.models import Calculation, Currency, DevicePricePreference
+from tatatuya.infrastructure.dbapi import dbapi as sqlite3
 from tatatuya.infrastructure.repositories._mapping import from_utc_text, to_utc_text
 
 
 class CalculationRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: Any) -> None:
         self.connection = connection
 
     def add(self, calculation: Calculation) -> Calculation:
@@ -74,7 +75,7 @@ class CalculationRepository:
 
 
 class DevicePreferenceRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: Any) -> None:
         self.connection = connection
 
     def get(self, device_id: str) -> DevicePricePreference | None:
@@ -121,11 +122,12 @@ class DevicePreferenceRepository:
             ),
         )
         preference = self.get(device_id)
-        assert preference is not None
+        if preference is None:
+            raise sqlite3.DatabaseError("SQLite did not return the saved preference")
         return preference
 
 
-def _map_calculation(row: sqlite3.Row) -> Calculation:
+def _map_calculation(row: Any) -> Calculation:
     return Calculation(
         id=row["id"],
         device_id=row["device_id"],

@@ -41,24 +41,31 @@ class DevicePage:
     last_row_key: str | None
 
 
-def parse_devices(result: Any) -> list[Device]:
-    return list(parse_device_page(result).devices)
+def parse_devices(result: Any, known_secrets: Sequence[str] = ()) -> list[Device]:
+    return list(parse_device_page(result, known_secrets).devices)
 
 
-def parse_device_page(result: Any) -> DevicePage:
-    rows = _require_list(result, ("list", "devices", "data"), "Device collection")
+def parse_device_page(
+    result: Any, known_secrets: Sequence[str] = ()
+) -> DevicePage:
+    rows = _require_list(
+        result,
+        ("list", "devices", "data"),
+        "Device collection",
+        known_secrets=known_secrets,
+    )
     devices: list[Device] = []
     for row in rows:
         if not isinstance(row, Mapping):
             raise TuyaPayloadError(
                 "Device collection contains a non-object row",
-                _dump(redact_sensitive_fields(result)),
+                _dump(redact_sensitive_fields(result, known_secrets)),
             )
         device_id = row.get("id") or row.get("device_id")
         if not device_id:
             raise TuyaPayloadError(
                 "Device collection contains a row without an ID",
-                _dump(redact_sensitive_fields(result)),
+                _dump(redact_sensitive_fields(result, known_secrets)),
             )
         name = row.get("name") or row.get("custom_name") or row.get("product_name")
         devices.append(
@@ -71,7 +78,7 @@ def parse_device_page(result: Any) -> DevicePage:
                 online=row.get("online")
                 if isinstance(row.get("online"), bool)
                 else None,
-                raw_device_json=_dump(redact_sensitive_fields(row)),
+                raw_device_json=_dump(redact_sensitive_fields(row, known_secrets)),
                 present_in_tuya=True,
             )
         )
@@ -81,26 +88,28 @@ def parse_device_page(result: Any) -> DevicePage:
     if not isinstance(raw_has_more, bool):
         raise TuyaPayloadError(
             "Device pagination has_more is not boolean",
-            _dump(redact_sensitive_fields(result)),
+            _dump(redact_sensitive_fields(result, known_secrets)),
         )
     has_more = raw_has_more
     raw_cursor = result.get("last_row_key") if isinstance(result, Mapping) else None
     if raw_cursor not in (None, "") and not isinstance(raw_cursor, (str, int)):
         raise TuyaPayloadError(
             "Device pagination cursor is invalid",
-            _dump(redact_sensitive_fields(result)),
+            _dump(redact_sensitive_fields(result, known_secrets)),
         )
     cursor = str(raw_cursor) if raw_cursor not in (None, "") else None
     if has_more and cursor is None:
         raise TuyaPayloadError(
             "Device pagination cursor is missing",
-            _dump(redact_sensitive_fields(result)),
+            _dump(redact_sensitive_fields(result, known_secrets)),
         )
     return DevicePage(tuple(devices), has_more, cursor)
 
 
-def parse_energy_specification(result: Any) -> EnergySpecification:
-    raw_json = _dump(redact_sensitive_fields(result))
+def parse_energy_specification(
+    result: Any, known_secrets: Sequence[str] = ()
+) -> EnergySpecification:
+    raw_json = _dump(redact_sensitive_fields(result, known_secrets))
     if not isinstance(result, Mapping):
         raise TuyaPayloadError("Specification result is not an object", raw_json)
     rows = _require_list(
@@ -157,16 +166,20 @@ def parse_energy_specification(result: Any) -> EnergySpecification:
     return EnergySpecification(str(candidates[0]["code"]), unit, scale, raw_json)
 
 
-def parse_individual_status(device_id: str, result: Any) -> DeviceStatus:
+def parse_individual_status(
+    device_id: str, result: Any, known_secrets: Sequence[str] = ()
+) -> DeviceStatus:
     rows = _find_list(result, ("status", "list"))
     return DeviceStatus(
         str(device_id),
         _parse_status_values(rows),
-        _dump(redact_sensitive_fields(result)),
+        _dump(redact_sensitive_fields(result, known_secrets)),
     )
 
 
-def parse_batch_status(result: Any) -> dict[str, DeviceStatus]:
+def parse_batch_status(
+    result: Any, known_secrets: Sequence[str] = ()
+) -> dict[str, DeviceStatus]:
     rows = _find_list(result, ("list", "devices", "data"))
     parsed: dict[str, DeviceStatus] = {}
     for row in rows:
@@ -177,7 +190,7 @@ def parse_batch_status(result: Any) -> dict[str, DeviceStatus]:
             continue
         status_rows = _find_list(row.get("status"), ("list",))
         try:
-            raw_json = _dump(redact_sensitive_fields(row))
+            raw_json = _dump(redact_sensitive_fields(row, known_secrets))
         except TuyaPayloadError:
             # One malformed device diagnostic must not discard other usable
             # meters from the same successful batch response.
@@ -214,6 +227,7 @@ def _require_list(
     nested_keys: Sequence[str],
     description: str,
     raw_json: str | None = None,
+    known_secrets: Sequence[str] = (),
 ) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -224,7 +238,7 @@ def _require_list(
                 if isinstance(nested, list):
                     return nested
                 break
-    diagnostic = raw_json or _dump(redact_sensitive_fields(value))
+    diagnostic = raw_json or _dump(redact_sensitive_fields(value, known_secrets))
     raise TuyaPayloadError(f"{description} is missing or invalid", diagnostic)
 
 
@@ -267,25 +281,40 @@ def _dump(value: Any) -> str:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
-_SENSITIVE_DEVICE_FIELDS = {
-    "access_token",
-    "client_secret",
-    "local_key",
+_SENSITIVE_KEY_PARTS = (
+    "authorization",
+    "credential",
+    "localkey",
     "password",
-    "secret_key",
-}
+    "passwd",
+    "secret",
+    "token",
+)
 
 
-def redact_sensitive_fields(value: Any) -> Any:
+def _canonical_diagnostic_key(value: object) -> str:
+    return "".join(character for character in str(value).casefold() if character.isalnum())
+
+
+def _is_sensitive_diagnostic_key(value: object) -> bool:
+    canonical = _canonical_diagnostic_key(value)
+    return any(part in canonical for part in _SENSITIVE_KEY_PARTS)
+
+
+def redact_sensitive_fields(value: Any, known_secrets: Sequence[str] = ()) -> Any:
     if isinstance(value, Mapping):
         return {
             key: (
                 "[REDACTED]"
-                if str(key).lower() in _SENSITIVE_DEVICE_FIELDS
-                else redact_sensitive_fields(item)
+                if _is_sensitive_diagnostic_key(key)
+                else redact_sensitive_fields(item, known_secrets)
             )
             for key, item in value.items()
         }
     if isinstance(value, list):
-        return [redact_sensitive_fields(item) for item in value]
+        return [redact_sensitive_fields(item, known_secrets) for item in value]
+    if isinstance(value, str):
+        for secret in known_secrets:
+            if secret:
+                value = value.replace(secret, "[REDACTED]")
     return value

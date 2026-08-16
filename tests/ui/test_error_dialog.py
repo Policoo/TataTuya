@@ -4,6 +4,7 @@ import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QLabel
 
@@ -20,6 +21,27 @@ def app() -> QApplication:
     instance = existing if isinstance(existing, QApplication) else QApplication([])
     instance.setStyleSheet(load_stylesheet())
     return instance
+
+
+def test_remote_looking_error_text_is_literal_plain_text() -> None:
+    qt_app = app()
+    error = UserFacingError(
+        "<b>Titlu fals</b>",
+        '<a href="https://evil.test">Mesaj fals</a> &amp; text',
+    )
+    dialog = ErrorDialog(error)
+    dialog.show()
+    qt_app.processEvents()
+
+    title = dialog.findChild(QLabel, "ErrorTitle")
+    message = dialog.findChild(QLabel, "ErrorMessage")
+    assert title is not None and message is not None
+    assert title.textFormat() is Qt.TextFormat.PlainText
+    assert message.textFormat() is Qt.TextFormat.PlainText
+    assert title.text() == "<b>Titlu fals</b>"
+    assert message.text().startswith('<a href="https://evil.test">')
+    assert not message.openExternalLinks()
+    dialog.close()
 
 
 def test_unexpected_worker_error_redacts_ui_and_logs(caplog) -> None:

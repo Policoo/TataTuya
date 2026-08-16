@@ -54,12 +54,16 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         *,
         initial_settings: TuyaSettings | None = None,
+        stored_secret_available: bool = False,
         worker_owner: WorkerOwner | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.regions = dict(regions)
         self.worker_owner = worker_owner
+        self.stored_secret_available = stored_secret_available or bool(
+            initial_settings is not None and initial_settings.client_secret
+        )
         self.active_thread: WorkflowThread | None = None
         self._active_operation: str | None = None
         self._pending_saved: SavedSettings | None = None
@@ -153,7 +157,8 @@ class SettingsDialog(QDialog):
             self.currency.setCurrentIndex(0)
             return
         self.client_id.setText(settings.client_id)
-        self.client_secret.setText(settings.client_secret)
+        if self.stored_secret_available:
+            self.client_secret.setPlaceholderText(text.CLIENT_SECRET_STORED)
         region_index = self.region.findData(settings.region)
         if region_index >= 0:
             self.region.setCurrentIndex(region_index)
@@ -182,7 +187,13 @@ class SettingsDialog(QDialog):
         self._set_actions_enabled(False)
         self._active_operation = "test"
         thread = WorkflowThread(
-            lambda context: self.service.test_connection(settings, context), self
+            lambda context: self.service.test_connection(
+                settings,
+                context,
+                preserve_stored_secret=self.stored_secret_available,
+            ),
+            self,
+            timeout_seconds=30,
         )
         if self.worker_owner is not None:
             thread.setParent(None)
@@ -231,10 +242,17 @@ class SettingsDialog(QDialog):
             )
             return
         try:
-            current = self.service.validate(self.current_settings())
+            current = self.service.validate(
+                self.current_settings(),
+                allow_stored_secret=self.stored_secret_available,
+            )
         except UserFacingError:
             current = None
-        if current is None or _connection_key(current) != _connection_key(payload.settings):
+        if (
+            current is None
+            or (current.client_id, current.region)
+            != (payload.settings.client_id, payload.settings.region)
+        ):
             self._verified_settings = None
             self._has_test_result = True
             self.feedback.setText(text.SETTINGS_CHANGED_AFTER_TEST)
@@ -291,19 +309,28 @@ class SettingsDialog(QDialog):
         if self.active_thread is not None:
             return
         try:
-            settings = self.service.validate(self.current_settings())
+            settings = self.service.validate(
+                self.current_settings(),
+                allow_stored_secret=self.stored_secret_available,
+            )
         except UserFacingError as error:
             self.error_raised.emit(error)
             return
         self._save_was_verified = (
             self._verified_settings is not None
-            and _connection_key(settings) == _connection_key(self._verified_settings)
+            and (settings.client_id, settings.region)
+            == (self._verified_settings.client_id, self._verified_settings.region)
         )
         self.feedback.setText(text.SAVING_SETTINGS)
         self._set_actions_enabled(False)
         self._active_operation = "save"
         thread = WorkflowThread(
-            lambda context: _save_with_cancellation(self.service, settings, context),
+            lambda context: _save_with_cancellation(
+                self.service,
+                settings,
+                context,
+                preserve_stored_secret=self.stored_secret_available,
+            ),
             self,
         )
         if self.worker_owner is not None:
@@ -346,20 +373,16 @@ class SettingsDialog(QDialog):
     def accept(self) -> None:
         if self.active_thread is None:
             super().accept()
-
-
-def _connection_key(settings: TuyaSettings) -> tuple[str, str, str]:
-    return (
-        settings.client_id,
-        settings.client_secret,
-        settings.region,
-    )
-
-
 def _save_with_cancellation(
     service: SettingsService,
     settings: TuyaSettings,
     cancellation,
+    *,
+    preserve_stored_secret: bool = False,
 ) -> TuyaSettings:
     cancellation.checkpoint()
-    return service.save(settings)
+    return service.save(
+        settings,
+        cancellation,
+        preserve_stored_secret=preserve_stored_secret,
+    )

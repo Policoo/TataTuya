@@ -11,11 +11,12 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFrame,
     QGridLayout,
-    QLabel,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
+
+from tatatuya.ui.plain_text import plain_text_label
 
 
 class AppModal(QDialog):
@@ -29,12 +30,12 @@ class AppModal(QDialog):
         layout.setContentsMargins(22, 20, 22, 18)
         layout.setSpacing(16)
 
-        title_label = QLabel(title)
+        title_label = plain_text_label(title)
         title_label.setObjectName("ModalTitle")
         layout.addWidget(title_label)
 
         if subtitle:
-            subtitle_label = QLabel(subtitle)
+            subtitle_label = plain_text_label(subtitle)
             subtitle_label.setObjectName("ModalSubtitle")
             subtitle_label.setWordWrap(True)
             layout.addWidget(subtitle_label)
@@ -63,9 +64,9 @@ class AppModal(QDialog):
         grid.setVerticalSpacing(10)
 
         for row, (label, value) in enumerate(rows):
-            label_widget = QLabel(label)
+            label_widget = plain_text_label(label)
             label_widget.setObjectName("FieldLabel")
-            value_widget = QLabel(format_value(value))
+            value_widget = plain_text_label(format_value(value))
             value_widget.setObjectName("FieldValue")
             value_widget.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
@@ -87,7 +88,7 @@ class AppModal(QDialog):
                 widget.deleteLater()
 
     def add_message(self, text: str) -> None:
-        label = QLabel(text)
+        label = plain_text_label(text)
         label.setObjectName("ModalMessage")
         label.setWordWrap(True)
         self.content_layout.addWidget(label)

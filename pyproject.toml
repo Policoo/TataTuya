@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools==83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,18 +8,21 @@ version = "0.1.0"
 description = "Readings and cost calculations for Tuya energy meters"
 requires-python = ">=3.11"
 dependencies = [
-    "PySide6>=6.7",
+    "PySide6==6.11.1",
+    "sqlcipher3==0.6.2; sys_platform == 'darwin'",
+    "pyobjc-framework-Security==12.1; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pyright>=1.1.408",
-    "pytest>=8.3",
-    "pytest-cov>=6.0",
-    "ruff>=0.15",
+    "pip-audit==2.9.0",
+    "pyright==1.1.411",
+    "pytest==9.1.1",
+    "pytest-cov==7.0.0",
+    "ruff==0.15.22",
 ]
 package = [
-    "pyinstaller>=6.11",
+    "pyinstaller==6.21.0",
 ]
 
 [project.scripts]
@@ -35,6 +38,9 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+markers = [
+    "macos_keychain: native macOS Keychain/SQLCipher test with a disposable service",
+]
 
 [tool.coverage.run]
 source = ["tatatuya"]

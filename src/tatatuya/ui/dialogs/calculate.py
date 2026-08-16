@@ -27,6 +27,7 @@ from tatatuya.domain.models import Calculation, Device, Reading
 from tatatuya.services.billing_service import BillingService, CalculationContext
 from tatatuya.domain.cancellation import CancellationContext
 from tatatuya.ui import text
+from tatatuya.ui.plain_text import plain_text_label, set_plain_text
 from tatatuya.ui.components.combo_box import PaletteSafeComboBox
 from tatatuya.ui.formatters import (
     format_decimal,
@@ -101,7 +102,7 @@ class CalculationDialog(QDialog):
         subtitle = QLabel(text.CALCULATION_SUBTITLE)
         subtitle.setObjectName("ModalSubtitle")
         subtitle.setWordWrap(True)
-        meter = QLabel(self.device.name)
+        meter = plain_text_label(self.device.name)
         meter.setObjectName("CalculationMeter")
         meter.setWordWrap(True)
         layout.addWidget(title)
@@ -515,7 +516,7 @@ class CalculationDialog(QDialog):
         thread.start()
 
     def _set_cloud_status(self, message: str, state: str) -> None:
-        self.cloud_feedback.setText(message)
+        set_plain_text(self.cloud_feedback, message)
         self.cloud_feedback.setProperty("state", state)
         self.cloud_feedback.style().unpolish(self.cloud_feedback)
         self.cloud_feedback.style().polish(self.cloud_feedback)

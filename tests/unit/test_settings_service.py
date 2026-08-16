@@ -1,3 +1,4 @@
+from tatatuya.domain.cancellation import CancellationContext
 from tatatuya.domain.errors import UserFacingError
 from tatatuya.domain.models import Currency, TuyaSettings
 from tatatuya.services.settings_service import SettingsService
@@ -10,10 +11,12 @@ class MemorySettings:
     def __init__(self, settings=None) -> None:
         self.settings = settings
 
-    def load_tuya(self):
+    def load_tuya(self, cancellation=None):
+        del cancellation
         return self.settings
 
-    def save_tuya(self, settings, updated_at_utc=None) -> None:
+    def save_tuya(self, settings, updated_at_utc=None, cancellation=None) -> None:
+        del updated_at_utc, cancellation
         self.settings = settings
 
 
@@ -47,7 +50,7 @@ def settings(**changes) -> TuyaSettings:
 
 def test_save_validates_normalizes_and_persists() -> None:
     store = MemorySettings()
-    service = SettingsService(store, lambda value: Gateway(), REGIONS)
+    service = SettingsService(store, lambda value, cancellation: Gateway(), REGIONS)
 
     saved = service.save(
         settings(
@@ -58,13 +61,13 @@ def test_save_validates_normalizes_and_persists() -> None:
         )
     )
 
-    assert saved == settings(currency=Currency.EUR)
-    assert store.settings == saved
+    assert saved == settings(client_secret="", currency=Currency.EUR)
+    assert store.settings == settings(currency=Currency.EUR)
 
 
 def test_incomplete_or_unknown_region_is_not_persisted() -> None:
     store = MemorySettings()
-    service = SettingsService(store, lambda value: Gateway(), REGIONS)
+    service = SettingsService(store, lambda value, cancellation: Gateway(), REGIONS)
 
     for candidate, title in (
         (settings(client_secret=""), "Setări incomplete"),
@@ -81,12 +84,31 @@ def test_incomplete_or_unknown_region_is_not_persisted() -> None:
 
 def test_connection_test_authenticates_and_checks_device_access() -> None:
     gateway = Gateway([object(), object()])
-    service = SettingsService(MemorySettings(), lambda value: gateway, REGIONS)
+    service = SettingsService(
+        MemorySettings(), lambda value, cancellation: gateway, REGIONS
+    )
 
-    result = service.test_connection(settings())
-    assert result.settings == settings()
+    candidate = settings(client_secret="credential-sentinel-94")
+    result = service.test_connection(candidate)
+    assert result.settings == settings(client_secret="")
     assert result.device_count == 2
+    assert candidate.client_secret not in repr(result)
     assert gateway.authenticated
+
+
+def test_connection_test_passes_the_same_cancellation_context_to_gateway() -> None:
+    observed = []
+    context = CancellationContext(30)
+    gateway = Gateway()
+    service = SettingsService(
+        MemorySettings(),
+        lambda value, cancellation: observed.append(cancellation) or gateway,
+        REGIONS,
+    )
+
+    service.test_connection(settings(), context)
+
+    assert observed == [context]
 
 
 def test_device_list_permission_failure_identifies_the_failed_step() -> None:
@@ -94,7 +116,11 @@ def test_device_list_permission_failure_identifies_the_failed_step() -> None:
         def list_devices(self, **params):
             raise RuntimeError("permission deny")
 
-    service = SettingsService(MemorySettings(), lambda value: ListFailureGateway(), REGIONS)
+    service = SettingsService(
+        MemorySettings(),
+        lambda value, cancellation: ListFailureGateway(),
+        REGIONS,
+    )
 
     try:
         service.test_connection(settings())
@@ -109,7 +135,7 @@ def test_device_list_permission_failure_identifies_the_failed_step() -> None:
 def test_connection_failure_is_safe_and_does_not_persist() -> None:
     store = MemorySettings()
     gateway = Gateway(error=RuntimeError("secret rejected"))
-    service = SettingsService(store, lambda value: gateway, REGIONS)
+    service = SettingsService(store, lambda value, cancellation: gateway, REGIONS)
 
     try:
         service.test_connection(settings())

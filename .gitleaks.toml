@@ -1,0 +1,10 @@
+title = "TataTuya secret and private-device detection"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "tuya-device-id-assignment"
+description = "Tuya device identifiers must never be committed as literals"
+regex = '''(?i)(?:device[._-]?id)[[:space:]]*=[[:space:]]*["']?[A-Za-z0-9]{22}["']?'''
+keywords = ["device"]

@@ -122,7 +122,7 @@ service value while a load is validated and reduced, but it is not part of
 billing. Billing continues to receive only persisted `Reading` models with
 database IDs.
 
-## 5. SQLite location and connection behavior
+## 5. SQLCipher location, keys, and connection behavior
 
 On macOS the database lives at:
 
@@ -130,10 +130,45 @@ On macOS the database lives at:
 ~/Library/Application Support/TataTuya/tatatuya.sqlite3
 ```
 
-Development and tests can override this path. Tests use temporary databases.
-SQLite connections are not shared unsafely across Qt worker threads. Transactions
-must make a refresh result internally consistent: device updates and associated
-readings either complete as designed or expose an explicit partial-result state.
+Production macOS uses the pinned SQLCipher driver and verifies a non-empty
+`PRAGMA cipher_version` before schema access. A random 32-byte database key is
+stored as Keychain generic-password account `database-key-v1` under service
+`ro.tatatuya.app`. The Tuya Client Secret uses the separate account
+`tuya-client-secret-v1`. Missing, denied, malformed, or wrong keys fail closed;
+an existing unreadable database is never replaced or opened through plaintext
+SQLite.
+
+The parent directory is owned by the current user, is not a symlink, and uses
+`0700`. The database, journals/WAL, migration temporaries, and logs are regular
+owned files using `0600`. Existing plaintext databases are classified by header
+and converted off the UI thread with SQLCipher `sqlcipher_export()` to a random
+same-directory temporary. The Client Secret is copied to and verified in
+Keychain before conversion, removed from the encrypted logical settings, and
+the original is atomically replaced only after integrity, foreign-key, cipher,
+correct-key, wrong-key, and empty-key checks pass. Conversion compares every
+schema object plus per-table row counts and content hashes. A `0600` migration
+state marker names only random same-directory temporary/rollback files and is
+durably written before export begins; startup uses it to clean temporary
+database sidecars or restore the original across a crash at any conversion
+stage, then fsyncs and removes it. A persistent owned `0600` interprocess lock
+serializes classification, database-key create-if-absent, recovery, conversion,
+fresh creation, initial migrations, and integrity checks across simultaneous
+launches. Lock waits are bounded and cancellation-aware.
+
+Linux and other POSIX development systems outside macOS default to ordinary
+SQLite and a separate, explicitly named `tuya-client-secret.plaintext` artifact
+beside the database. Atomic symlink-safe writes and best-effort `0700`/`0600`
+permissions reduce accidental exposure but do not provide encryption;
+developers must use test credentials. Windows is deliberately unsupported and
+fails with an explicit platform diagnostic before POSIX locking or ownership
+APIs are used. Production macOS has no environment switch to the plaintext
+backend and always requires SQLCipher plus Keychain. Tests may inject an
+in-memory secret store. Connections
+are not shared unsafely across Qt worker threads. Cancellation contexts install
+SQLite progress handlers and are checked at cross-store boundaries so cancelled
+work starts no later transaction. Transactions must make a refresh result
+internally consistent: device updates and associated readings either complete
+as designed or expose an explicit partial-result state.
 
 ## 6. Database schema
 
@@ -152,7 +187,8 @@ value TEXT NOT NULL
 updated_at_utc TEXT NOT NULL
 ```
 
-Stores Tuya Client ID, Client Secret, region, and selected currency. Migration 2
+Stores Tuya Client ID, region, and selected currency. The Client Secret is a
+Keychain value and is forbidden in this table. Migration 2
 removes the obsolete `tuya.account_uid` setting from existing databases.
 Migration 3 adds device eligibility/presence/specification snapshots and the
 per-reading specification snapshot without rewriting existing readings.
@@ -331,9 +367,29 @@ it preserves exactly what the user saw and provides a future statement record.
 
 ### Authentication and settings
 
-The Tuya client receives credentials from `settings_service`; production code
-does not depend on module-level credential constants. Settings remain in SQLite
-for this version.
+The Tuya client receives transient credentials from `settings_service`;
+production code does not depend on module-level credential constants. The
+Client Secret is loaded from the platform credential backend only inside
+background workflows. Automatic capability checks use non-interactive access;
+denied or corrupt Client Secret disables only remote capability, while cached
+rows, History, currency, and billing remain available. Settings and explicit
+remote actions surface the Romanian recovery error. The Settings UI never
+receives the secret in a field or Qt signal; it receives only
+a stored-state flag and sanitized connection-test settings. Saving writes and verifies
+credential secret before committing non-secret settings to the database. A
+cancellation after the secret write stops before the database update, yielding
+a safe retry state.
+
+Production Security-framework operations execute in a narrowly scoped helper
+process. The owning workflow polls its cancellation context and enforces a
+five-second maximum, then terminates and joins the helper before returning. A
+cancelled or timed-out credential write may already have completed atomically in
+Keychain, but no late helper result can start a database transaction; retrying
+Settings safely reconciles the non-secret metadata. Automated tests replace the
+default production Keychain backend with memory and reject the production
+`ro.tatatuya.app` service name. Native macOS tests and smoke runs use unique
+`ro.tatatuya.app.test.*` or `ro.tatatuya.app.ci-smoke.*` services and delete
+only their exact accounts.
 
 Application settings and Tuya connection settings have separate read contracts.
 Calculation preparation loads currency without requiring Client ID, Client
@@ -549,7 +605,10 @@ current-status request.
 Every ordinary Tuya request uses the lesser of five seconds or the context's
 remaining time as its end-to-end transport timeout, covering resolution,
 connection, and body reads; an implementation whose timeout cannot bound all
-three must provide an abortable request instead. SQLite uses a busy timeout no
+three must provide an abortable request instead. Production uses an abortable
+Qt Network request with manual redirect policy, an absolute deadline timer,
+cancellation polling, and bounded `readyRead` draining; abort covers DNS,
+connection, TLS, headers, and body transfer. SQLite uses a busy timeout no
 greater than five seconds. The complete workflow deadlines are:
 
 | Workflow | Deadline |
@@ -636,6 +695,12 @@ transaction including lock acquisition/commit, and up to one second for worker
 completion delivery.
 Other workflows drain within six seconds because they may finish at most one
 already-started five-second I/O or SQLite transaction plus completion delivery.
+Security-framework work is owned by a killable helper process, and database
+classification, snapshots, export, integrity checks, and key probes all receive
+the workflow cancellation context and SQLite progress handlers. If cancellation
+interrupts a conversion, recovery receives its own five-second safety budget:
+it restores or preserves one valid database before cleanup and never deletes the
+last valid copy merely to meet the timer.
 Workflow deadlines still apply if they expire sooner. A capture transaction
 that cannot commit within its five-second stage bound rolls back and reports the
 safe database failure path; it never retries during shutdown. Late success/
@@ -843,6 +908,9 @@ are logged locally and wrapped in a generic Romanian message.
 - Settings initialization, loading, connection testing, saving, and commit run
   through worker-owned operations. A Settings dialog never owns a live SQLite
   connection and receives its initial model after background loading.
+- Labels receiving device metadata, diagnostics, or service errors explicitly
+  use `Qt.PlainText` and do not open external links. Large diagnostics continue
+  through `QPlainTextEdit.setPlainText()`.
 
 ## 11. Testing architecture
 
@@ -871,6 +939,17 @@ are logged locally and wrapped in a generic Romanian message.
 ### Integration tests
 
 - Empty-database migrations
+- Table-driven plaintext-to-SQLCipher conversion faults at every credential,
+  snapshot, export, verification, replacement, rollback-cleanup, and marker-
+  cleanup boundary. Both cancellation and ordinary exceptions must preserve a
+  valid database, and restart must converge with identical schema, row counts,
+  row hashes, and Client Secret placement.
+- Cancellation while the separate conversion-recovery budget is active must
+  retain the last valid copy. Blocked foreign-key and integrity verification in
+  that production-created recovery context must be interrupted through the
+  SQLite progress handler rather than merely observing a checkpoint before the
+  query. A failed recovery restore keeps both the active and rollback copies for
+  the next startup.
 - Device upsert without history loss
 - Equal repeated readings retained
 - Every successful status call recorded
@@ -956,15 +1035,27 @@ are logged locally and wrapped in a generic Romanian message.
 
 ## 12. Packaging and release
 
+- Pull requests and pushes to `main` run a read-only correctness workflow with
+  Ruff, Pyright, the complete Linux-verifiable suite, both Qt transport/UI test
+  orders, and `pip check`. A native Apple Silicon job installs the hash-locked
+  macOS graph and runs only disposable-Keychain/SQLCipher tests, including a
+  populated plaintext conversion and installed-launcher encryption check.
 - Build an Apple Silicon `.app` with PyInstaller.
 - Bundle styles, icons, and database migrations explicitly.
 - Create an unsigned `.dmg` containing the `.app` and Applications shortcut.
-- GitHub Actions runs tests, builds on an ARM64 macOS runner, and attaches the
-  `.dmg` to a draft GitHub Release. It must refuse to replace an already-public
-  release automatically.
+- GitHub Actions installs the Python 3.12/macOS ARM64 hash lock, audits it,
+  tests, and builds with a read-only token. A separate publication job receives
+  `contents: write` only after downloading the verified artifact and attaches
+  the DMG, SHA-256 checksum, and CycloneDX SBOM to a draft release. It must
+  refuse to replace an already-public release automatically. Every third-party
+  action is pinned to a full commit SHA and checkout never persists credentials.
 - Document the first-launch Control-click/right-click `Open` workaround required
   by Gatekeeper for an unnotarized application.
 - Perform a clean-machine/fresh-database rehearsal before promoting the draft
   to a public release or calling the release ready.
+
+Repository settings make the three pre-merge correctness jobs required checks
+after their signal is stable; workflow files cannot enforce branch protection
+by themselves.
 
 No release may contain credentials embedded in source or build artifacts.

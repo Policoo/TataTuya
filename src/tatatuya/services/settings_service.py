@@ -27,31 +27,51 @@ class SettingsService:
     def __init__(
         self,
         store: SettingsStore,
-        gateway_factory: Callable[[TuyaSettings], SettingsGateway],
+        gateway_factory: Callable[
+            [TuyaSettings, CancellationContext | None], SettingsGateway
+        ],
         supported_regions: Collection[str],
     ) -> None:
         self.store = store
         self.gateway_factory = gateway_factory
         self.supported_regions = frozenset(supported_regions)
 
-    def load(self) -> TuyaSettings | None:
-        return self.store.load_tuya()
+    def load(
+        self, cancellation: CancellationContext | None = None
+    ) -> TuyaSettings | None:
+        if cancellation is None:
+            return self.store.load_tuya()
+        cancellation.checkpoint()
+        return self.store.load_tuya(cancellation=cancellation)
 
-    def save(self, settings: TuyaSettings) -> TuyaSettings:
-        normalized = self.validate(settings)
-        self.store.save_tuya(normalized)
-        return normalized
+    def save(
+        self,
+        settings: TuyaSettings,
+        cancellation: CancellationContext | None = None,
+        *,
+        preserve_stored_secret: bool = False,
+    ) -> TuyaSettings:
+        if cancellation is not None:
+            cancellation.checkpoint()
+        normalized = self._resolve(settings, preserve_stored_secret, cancellation)
+        if cancellation is None:
+            self.store.save_tuya(normalized)
+        else:
+            self.store.save_tuya(normalized, cancellation=cancellation)
+        return replace(normalized, client_secret="")
 
     def test_connection(
         self,
         settings: TuyaSettings,
         cancellation: CancellationContext | None = None,
+        *,
+        preserve_stored_secret: bool = False,
     ) -> ConnectionTestResult:
         if cancellation is not None:
             cancellation.checkpoint()
-        normalized = self.validate(settings)
+        normalized = self._resolve(settings, preserve_stored_secret, cancellation)
         try:
-            gateway = self.gateway_factory(normalized)
+            gateway = self.gateway_factory(normalized, cancellation)
             gateway.authenticate()
         except Exception as exc:
             raise self._connection_error(
@@ -71,7 +91,27 @@ class SettingsService:
             ) from exc
         if cancellation is not None:
             cancellation.checkpoint()
-        return ConnectionTestResult(normalized, len(devices))
+        return ConnectionTestResult(
+            replace(normalized, client_secret=""),
+            len(devices),
+        )
+
+    def _resolve(
+        self,
+        settings: TuyaSettings,
+        preserve_stored_secret: bool,
+        cancellation: CancellationContext | None = None,
+    ) -> TuyaSettings:
+        candidate = settings
+        if preserve_stored_secret and not settings.client_secret.strip():
+            stored = (
+                self.store.load_tuya()
+                if cancellation is None
+                else self.store.load_tuya(cancellation=cancellation)
+            )
+            if stored is not None and stored.client_secret:
+                candidate = replace(settings, client_secret=stored.client_secret)
+        return self.validate(candidate)
 
     @staticmethod
     def _connection_error(
@@ -82,14 +122,21 @@ class SettingsService:
         details = str(error).replace(settings.client_secret, "[REDACTED]")
         return UserFacingError("Conexiunea Tuya nu a reușit", message, details)
 
-    def validate(self, settings: TuyaSettings) -> TuyaSettings:
+    def validate(
+        self, settings: TuyaSettings, *, allow_stored_secret: bool = False
+    ) -> TuyaSettings:
         normalized = replace(
             settings,
             client_id=settings.client_id.strip(),
             client_secret=settings.client_secret.strip(),
             region=settings.region.strip(),
         )
-        if not normalized.is_complete:
+        connection_fields_complete = bool(
+            normalized.client_id
+            and normalized.region
+            and (normalized.client_secret or allow_stored_secret)
+        )
+        if not connection_fields_complete:
             raise UserFacingError(
                 "Setări incomplete",
                 "Completați Client ID, Client Secret și regiunea Tuya.",

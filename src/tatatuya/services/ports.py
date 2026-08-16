@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from tatatuya.domain.cancellation import CancellationContext
 from tatatuya.domain.models import (
     Calculation,
     Currency,
@@ -38,8 +39,15 @@ class TuyaGateway(Protocol):
 
 
 class SettingsStore(Protocol):
-    def save_tuya(self, settings: TuyaSettings, updated_at_utc: datetime | None = None) -> None: ...
-    def load_tuya(self) -> TuyaSettings | None: ...
+    def save_tuya(
+        self,
+        settings: TuyaSettings,
+        updated_at_utc: datetime | None = None,
+        cancellation: CancellationContext | None = None,
+    ) -> None: ...
+    def load_tuya(
+        self, cancellation: CancellationContext | None = None
+    ) -> TuyaSettings | None: ...
 
 
 class DeviceStore(Protocol):

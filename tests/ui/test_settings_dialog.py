@@ -20,10 +20,12 @@ class MemorySettings:
     def __init__(self, value=None) -> None:
         self.value = value
 
-    def load_tuya(self):
+    def load_tuya(self, cancellation=None):
+        del cancellation
         return self.value
 
-    def save_tuya(self, settings, updated_at_utc=None) -> None:
+    def save_tuya(self, settings, updated_at_utc=None, cancellation=None) -> None:
+        del updated_at_utc, cancellation
         self.value = settings
 
 
@@ -61,7 +63,9 @@ def wait_for_operation(qt_app: QApplication, dialog: SettingsDialog) -> None:
 def test_settings_dialog_loads_fields_and_has_usable_geometry(tmp_path) -> None:
     qt_app = app()
     store = MemorySettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )
@@ -69,7 +73,8 @@ def test_settings_dialog_loads_fields_and_has_usable_geometry(tmp_path) -> None:
     qt_app.processEvents()
 
     assert dialog.client_id.text() == "client-id"
-    assert dialog.client_secret.text() == "client-secret"
+    assert dialog.client_secret.text() == ""
+    assert dialog.client_secret.placeholderText() == text.CLIENT_SECRET_STORED
     assert dialog.client_secret.echoMode() == dialog.client_secret.EchoMode.Password
     assert dialog.region.currentData() == "central_europe"
     assert dialog.currency.currentData() == Currency.EUR
@@ -93,7 +98,9 @@ def test_settings_dialog_loads_fields_and_has_usable_geometry(tmp_path) -> None:
 def test_connection_test_runs_async_and_restores_actions(tmp_path) -> None:
     qt_app = app()
     store = MemorySettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )
@@ -119,13 +126,20 @@ def test_connection_test_runs_async_and_restores_actions(tmp_path) -> None:
     assert dialog.grab().save(str(tmp_path / "settings-connected.png"))
     dialog.save()
     wait_for_operation(qt_app, dialog)
-    assert results == [SavedSettings(configured_settings(), True)]
+    assert results == [
+        SavedSettings(
+            TuyaSettings("client-id", "", "central_europe", Currency.EUR),
+            True,
+        )
+    ]
 
 
 def test_edit_after_success_invalidates_the_verified_snapshot() -> None:
     qt_app = app()
     store = MemorySettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )
@@ -150,7 +164,9 @@ def test_edit_after_success_invalidates_the_verified_snapshot() -> None:
 def test_currency_change_keeps_the_tuya_connection_verified() -> None:
     qt_app = app()
     store = MemorySettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )
@@ -184,7 +200,7 @@ def test_escape_during_connection_test_does_not_wait_on_gui_thread() -> None:
 
     service = SettingsService(
         MemorySettings(configured_settings()),
-        lambda value: BlockingGateway(),
+        lambda value, cancellation: BlockingGateway(),
         REGION_LABELS,
     )
     dialog = SettingsDialog(
@@ -224,7 +240,9 @@ def test_dark_palette_form_labels_and_open_combo_are_readable(tmp_path) -> None:
     qt_app.setPalette(dark)
     try:
         service = SettingsService(
-            MemorySettings(configured_settings()), lambda value: Gateway(), REGION_LABELS
+            MemorySettings(configured_settings()),
+            lambda value, cancellation: Gateway(),
+            REGION_LABELS,
         )
         dialog = SettingsDialog(
             service, REGION_LABELS, initial_settings=service.load()
@@ -265,7 +283,9 @@ def test_dark_palette_form_labels_and_open_combo_are_readable(tmp_path) -> None:
 def test_save_persists_and_emits_normalized_settings() -> None:
     qt_app = app()
     store = MemorySettings()
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(service, REGION_LABELS)
     results = []
     dialog.settings_saved.connect(results.append)
@@ -280,7 +300,12 @@ def test_save_persists_and_emits_normalized_settings() -> None:
     expected = TuyaSettings(
         "client", "secret", "central_europe", Currency.EUR
     )
-    assert results == [SavedSettings(expected, False)]
+    assert results == [
+        SavedSettings(
+            TuyaSettings("client", "", "central_europe", Currency.EUR),
+            False,
+        )
+    ]
     assert store.value == expected
     assert dialog.result() == dialog.DialogCode.Accepted
 
@@ -291,13 +316,17 @@ def test_slow_save_runs_off_gui_thread_and_keeps_events_responsive() -> None:
     save_threads = []
 
     class SlowSettings(MemorySettings):
-        def save_tuya(self, settings, updated_at_utc=None) -> None:
+        def save_tuya(
+            self, settings, updated_at_utc=None, cancellation=None
+        ) -> None:
             save_threads.append(threading.get_ident())
             time.sleep(0.03)
-            super().save_tuya(settings, updated_at_utc)
+            super().save_tuya(settings, updated_at_utc, cancellation)
 
     store = SlowSettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )
@@ -318,14 +347,19 @@ def test_save_failure_restores_controls_and_keeps_dialog_open() -> None:
     qt_app = app()
 
     class FailingSettings(MemorySettings):
-        def save_tuya(self, settings, updated_at_utc=None) -> None:
+        def save_tuya(
+            self, settings, updated_at_utc=None, cancellation=None
+        ) -> None:
+            del settings, updated_at_utc, cancellation
             raise UserFacingError(
                 "Salvare nereușită",
                 "Setările nu au putut fi scrise.",
             )
 
     store = FailingSettings(configured_settings())
-    service = SettingsService(store, lambda value: Gateway(), REGION_LABELS)
+    service = SettingsService(
+        store, lambda value, cancellation: Gateway(), REGION_LABELS
+    )
     dialog = SettingsDialog(
         service, REGION_LABELS, initial_settings=store.value
     )

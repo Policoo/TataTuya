@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 
 from PySide6.QtCore import Signal
@@ -20,6 +21,21 @@ from PySide6.QtWidgets import (
 from tatatuya.domain.models import Device, EnergyEligibility, Reading
 from tatatuya.ui import text
 from tatatuya.ui.formatters import format_energy, format_local_datetime, online_label
+
+
+_BIDI_CONTROLS = frozenset(chr(code) for code in range(0x202A, 0x202F)) | frozenset(
+    chr(code) for code in range(0x2066, 0x206A)
+)
+
+
+def safe_tooltip(value: str) -> str:
+    """Render diagnostic text literally, without active rich-text content."""
+
+    visible = "".join(
+        f"\\u{ord(character):04x}" if character in _BIDI_CONTROLS else character
+        for character in value
+    )
+    return f'<qt><div style="white-space: pre-wrap">{html.escape(visible)}</div></qt>'
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +87,6 @@ class DeviceTable(QTableWidget):
         self.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             name_item = QTableWidgetItem(row.device.name)
-            name_item.setToolTip(row.device.name)
             self.setItem(row_index, 0, name_item)
             state = (
                 text.NOT_IN_TUYA
@@ -93,7 +108,7 @@ class DeviceTable(QTableWidget):
                 state_font.setWeight(QFont.Weight.DemiBold)
                 state_item.setFont(state_font)
             if row.error_message:
-                state_item.setToolTip(row.error_message)
+                state_item.setToolTip(safe_tooltip(row.error_message))
             self.setItem(row_index, 1, state_item)
             self.setItem(
                 row_index,

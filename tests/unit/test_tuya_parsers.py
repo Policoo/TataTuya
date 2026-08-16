@@ -12,6 +12,7 @@ from tatatuya.infrastructure.tuya.parsers import (
     parse_devices,
     parse_energy_specification,
     parse_individual_status,
+    redact_sensitive_fields,
 )
 
 
@@ -31,6 +32,59 @@ def test_device_fixture_maps_to_domain_devices() -> None:
     assert json.loads(devices[0].raw_device_json)["product_id"] == "product-1"
     assert json.loads(devices[0].raw_device_json)["local_key"] == "[REDACTED]"
     assert "must-not-be-persisted" not in devices[0].raw_device_json
+
+
+def test_redaction_canonicalizes_nested_sensitive_key_variants() -> None:
+    payload = {
+        "refresh_token": "one",
+        "Authorization": "two",
+        "clientSecret": "three",
+        "client-secret": "four",
+        "nested": [{"local.Key": "five"}, {"PASS WORD": "six"}],
+        "forward_energy_total": "123.4500",
+    }
+
+    sanitized = redact_sensitive_fields(payload)
+
+    assert sanitized["refresh_token"] == "[REDACTED]"
+    assert sanitized["Authorization"] == "[REDACTED]"
+    assert sanitized["clientSecret"] == "[REDACTED]"
+    assert sanitized["client-secret"] == "[REDACTED]"
+    assert sanitized["nested"][0]["local.Key"] == "[REDACTED]"
+    assert sanitized["nested"][1]["PASS WORD"] == "[REDACTED]"
+    assert sanitized["forward_energy_total"] == "123.4500"
+
+
+def test_known_secret_values_are_removed_even_under_unknown_keys() -> None:
+    payload = {
+        "diagnostic": "prefix synthetic-secret suffix",
+        "nested": ["synthetic-token", {"safe": "synthetic-secret"}],
+    }
+
+    sanitized = redact_sensitive_fields(
+        payload, ("synthetic-secret", "synthetic-token")
+    )
+
+    assert "synthetic-secret" not in repr(sanitized)
+    assert "synthetic-token" not in repr(sanitized)
+    assert sanitized["diagnostic"] == "prefix [REDACTED] suffix"
+
+
+def test_client_parser_diagnostics_remove_known_secret_values() -> None:
+    devices = parse_devices(
+        {
+            "devices": [
+                {
+                    "id": "meter-1",
+                    "name": "Casa",
+                    "diagnostic": "synthetic-secret",
+                }
+            ]
+        },
+        ("synthetic-secret",),
+    )
+
+    assert "synthetic-secret" not in devices[0].raw_device_json
 
 
 @pytest.mark.parametrize(

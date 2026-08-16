@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
+from typing import Any
+
+from tatatuya.infrastructure.dbapi import dbapi
 
 
 MIGRATIONS: tuple[tuple[int, str], ...] = (
@@ -113,7 +115,7 @@ MIGRATIONS: tuple[tuple[int, str], ...] = (
 )
 
 
-def migrate(connection: sqlite3.Connection) -> None:
+def migrate(connection: Any) -> None:
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -143,7 +145,7 @@ def migrate(connection: sqlite3.Connection) -> None:
         """
         try:
             connection.executescript(script)
-        except sqlite3.Error:
+        except dbapi.Error:
             if connection.in_transaction:
                 connection.rollback()
             raise

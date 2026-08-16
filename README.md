@@ -19,11 +19,35 @@ confirm `Open` again. This exception is required only once.
 
 Local data is stored in
 `~/Library/Application Support/TataTuya/tatatuya.sqlite3`. Readings and
-calculations are not deleted when the application closes or is updated.
+calculations are not deleted when the application closes or is updated. The
+complete database is encrypted with SQLCipher. TataTuya stores the random
+database key and the Tuya Client Secret as separate generic passwords in the
+login Keychain; the Client Secret is not stored inside the database.
+
+On later Settings visits the Client Secret field remains empty and indicates
+that a secret is stored. Leave it empty to preserve the current secret, or enter
+a replacement. If macOS denies Keychain access, unlock the login Keychain and
+retry the explicit Settings or Tuya action.
+
+Version one uses a local-key recovery policy. Losing the TataTuya database-key
+item from the login Keychain makes the encrypted history unreadable. Copying
+only `tatatuya.sqlite3` to another Mac is not a complete backup. Use a tested
+Time Machine/Mac migration process that includes the login Keychain; TataTuya
+does not provide a portable database export in this version.
 
 Saved readings and calculations remain available when Tuya credentials are
-missing. In that state, refresh, individual status, and Tuya Cloud import are
-disabled, while Calculate, History, and cached device information stay usable.
+missing, denied, or corrupt. In that state, refresh, individual status, and Tuya
+Cloud import are disabled, while Calculate, History, currency, and cached device
+information stay usable.
+
+Linux and other POSIX development systems outside macOS deliberately use
+ordinary SQLite and store Client Secret in the plainly named
+`tuya-client-secret.plaintext` file beside the development database. The
+directory and files are restricted to the current user where the platform
+permits, but this is not encryption. Use test-only Tuya credentials on
+development machines. Windows development is not supported. macOS production
+builds cannot select this backend and continue to require SQLCipher and
+Keychain.
 
 ### Tuya Cloud history capability
 
@@ -83,18 +107,25 @@ Building the distribution requires an Apple Silicon Mac:
 ./scripts/create_dmg.sh 0.1.0
 ```
 
-The first script creates `dist/TataTuya.app`, verifies the executable
-architecture, and runs a smoke test for bundled resources and migrations. The
-second creates `dist/TataTuya-0.1.0-arm64.dmg` with the application and an
-Applications shortcut.
+The first script creates `dist/TataTuya.app`, verifies the executable and
+SQLCipher extension architecture/linkage, creates and reopens a synthetic
+encrypted database through a disposable Keychain namespace, and cleans up that
+exact namespace. The second creates `dist/TataTuya-0.1.0-arm64.dmg` with the
+application and an Applications shortcut.
 
 Release preparation is triggered by a Git tag that exactly matches the version
 in `pyproject.toml`, for example `v0.1.0`. The ARM64 workflow runs the checks,
-builds the DMG, and attaches it to a draft GitHub Release. The release remains
+builds the DMG with read-only repository permission, then a separate publication
+job attaches the DMG, SHA-256 checksum, and SBOM to a draft GitHub Release. The release remains
 unpublished until the Phase 12 rehearsal on a clean Mac confirms installation,
 database initialization, opening the settings screen, and connection testing.
 Never place real credentials in source files, configuration files, or release
 artifacts.
+
+Pull requests and pushes to `main` also run read-only Linux correctness, both Qt
+test orders, and native Apple Silicon Keychain/SQLCipher checks before a release
+tag exists. Configure those jobs as required branch checks in the repository
+settings once their signal is stable.
 
 ### Clean-Mac release rehearsal
 
@@ -103,14 +134,20 @@ no TataTuya development checkout or existing TataTuya data:
 
 1. Download the DMG from the draft release, install the app, and launch it with
    the documented Gatekeeper workaround.
-2. Confirm that the unconfigured app directs the user to Settings and creates
-   `~/Library/Application Support/TataTuya/tatatuya.sqlite3`.
+2. Confirm that the unconfigured app directs the user to Settings, creates an
+   encrypted `~/Library/Application Support/TataTuya/tatatuya.sqlite3`, and uses
+   `0700`/`0600` permissions for the data directory and sensitive files.
 3. Enter real Tuya credentials in Settings, test the connection, save, and
    confirm that the meter table refreshes without developer tools.
-4. Refresh a supported meter twice, calculate a cost between its two saved
+4. Quit and reopen the app, confirm the Keychain-backed configuration and local
+   history survive, then refresh a supported meter twice and calculate a cost between its two saved
    readings, and confirm that the calculation appears in History after an app
    restart.
-5. Inspect the local log and release artifact for credentials, then publish the
+5. Rehearse a populated synthetic plaintext database upgrade; confirm the old
+   Client Secret is absent from logical settings and correct/wrong/missing key
+   behavior is fail-closed.
+6. Inspect the local log and release artifact for credentials, verify the DMG
+   checksum/SBOM and SQLCipher native linkage, then publish the
    draft only if every preceding check passes.
 
 ## Troubleshooting
@@ -119,6 +156,10 @@ no TataTuya development checkout or existing TataTuya data:
   Control-click → `Open` steps above; do not disable Gatekeeper globally.
 - If configuration is missing, open the application's settings screen. There
   is no first-run wizard.
+- If TataTuya reports that Keychain or the protected database is unavailable,
+  do not delete or rename the database. Unlock the login Keychain, restore its
+  TataTuya key items through the supported Mac backup/migration process, and
+  retry. The application intentionally does not create an empty replacement.
 - If authentication succeeds but device listing fails, verify that the Tuya
   cloud project grants access to the associated-device listing used by the app.
 - If cloud import reports an unavailable service or permission, confirm that

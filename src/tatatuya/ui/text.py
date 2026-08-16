@@ -51,6 +51,7 @@ SETTINGS_SUBTITLE = (
     "Configurați accesul numai pentru citire la Tuya și moneda folosită pentru calcule."
 )
 SETTINGS_NOT_TESTED = "Conexiunea nu a fost testată în această sesiune."
+CLIENT_SECRET_STORED = "Secret salvat — lăsați gol pentru a-l păstra"
 SETTINGS_CHANGED_AFTER_TEST = "Datele s-au schimbat. Testați din nou conexiunea."
 TEST_CONNECTION = "Testează conexiunea"
 TESTING_CONNECTION = "Se testează conexiunea Tuya…"

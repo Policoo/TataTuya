@@ -37,7 +37,7 @@ def configured_database(tmp_path) -> Database:
     database = Database(tmp_path / "status.sqlite3")
     database.initialize()
     with database.connect() as connection:
-        SettingsRepository(connection).save_tuya(
+        SettingsRepository(connection, database.client_secret_store()).save_tuya(
             TuyaSettings("client", "secret", "central_europe", Currency.RON)
         )
         DeviceRepository(connection).upsert(Device("meter-1", "Casa"))

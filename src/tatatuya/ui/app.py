@@ -20,6 +20,7 @@ from tatatuya.infrastructure.repositories.calculations import (
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import (
+    ClientSecretUnavailableError,
     DatabaseSettingsStore,
     SettingsRepository,
 )
@@ -56,6 +57,7 @@ from tatatuya.ui.workers import WorkerOwner, log_unexpected_exception
 class SettingsDialogContext:
     service: SettingsService
     settings: TuyaSettings | None
+    stored_secret_available: bool
 
 
 # Tuya documents report-log values as reports of the selected DP and defines a
@@ -132,11 +134,11 @@ def _load_initial_state(
 ) -> InitialState:
     cancellation = cancellation or uncancelled_context()
     cancellation.checkpoint()
-    database.initialize()
-    with database.connect() as connection:
-        settings = SettingsRepository(connection).load_tuya()
+    database.initialize(cancellation)
+    with database.connect(cancellation) as connection:
         devices = DeviceRepository(connection).list_all()
         latest = ReadingRepository(connection).latest_by_device()
+    settings = _load_optional_remote_settings(database, cancellation)
     configured = settings is not None and settings.is_complete
     rows = [
         DeviceTableRow(device, latest.get(device.device_id))
@@ -147,7 +149,7 @@ def _load_initial_state(
     if settings is not None and settings.is_complete:
 
         def refresh_workflow(context: CancellationContext):
-            return _refresh_workflow(database, settings, context)
+            return _refresh_with_saved_settings(database, context)
 
         refresh = refresh_workflow
     return InitialState(rows, configured, refresh)
@@ -160,7 +162,7 @@ def _refresh_workflow(
 ):
     cancellation = cancellation or uncancelled_context()
     cancellation.checkpoint()
-    with database.connect() as connection:
+    with database.connect(cancellation) as connection:
         gateway = TuyaClient(settings, cancellation=cancellation)
         devices = DeviceRepository(connection)
         reading_store = ReadingRepository(connection)
@@ -170,6 +172,23 @@ def _refresh_workflow(
         )
 
 
+def _refresh_with_saved_settings(
+    database: Database,
+    cancellation: CancellationContext,
+):
+    cancellation.checkpoint()
+    with database.connect(cancellation) as connection:
+        settings = SettingsRepository(
+            connection, database.client_secret_store()
+        ).load_tuya(cancellation)
+    if settings is None or not settings.is_complete:
+        raise UserFacingError(
+            "Setări incomplete",
+            "Configurați conexiunea Tuya înainte de actualizare.",
+        )
+    return _refresh_workflow(database, settings, cancellation)
+
+
 def _prepare_calculation(
     database: Database,
     device_id: str,
@@ -177,20 +196,22 @@ def _prepare_calculation(
 ) -> CalculationContext:
     cancellation = cancellation or uncancelled_context(15)
     cancellation.checkpoint()
-    database.initialize()
-    with database.connect() as connection:
-        settings_repository = SettingsRepository(connection)
+    database.initialize(cancellation)
+    with database.connect(cancellation) as connection:
+        settings_repository = SettingsRepository(
+            connection, database.client_secret_store()
+        )
         currency = settings_repository.load_currency()
-        settings = settings_repository.load_tuya()
         context = BillingService(
             ReadingRepository(connection),
             CalculationRepository(connection),
             DevicePreferenceRepository(connection),
         ).prepare(device_id, currency)
-        return replace(
-            context,
-            tuya_configured=settings is not None and settings.is_complete,
-        )
+    settings = _load_optional_remote_settings(database, cancellation)
+    return replace(
+        context,
+        tuya_configured=settings is not None and settings.is_complete,
+    )
 
 
 def _save_calculation(
@@ -204,7 +225,7 @@ def _save_calculation(
 ) -> Calculation:
     cancellation = cancellation or uncancelled_context(15)
     cancellation.checkpoint()
-    with database.connect() as connection:
+    with database.connect(cancellation) as connection:
         return BillingService(
             ReadingRepository(connection),
             CalculationRepository(connection),
@@ -224,8 +245,10 @@ def _import_cloud_history(
     cancellation: CancellationContext,
 ) -> CloudImportPayload:
     cancellation.checkpoint()
-    with database.connect() as connection:
-        settings = SettingsRepository(connection).load_tuya()
+    with database.connect(cancellation) as connection:
+        settings = SettingsRepository(
+            connection, database.client_secret_store()
+        ).load_tuya(cancellation)
         if settings is None or not settings.is_complete:
             raise UserFacingError(
                 "Setări incomplete",
@@ -264,8 +287,8 @@ def _prepare_history(
 ) -> HistoryContext:
     cancellation = cancellation or uncancelled_context(15)
     cancellation.checkpoint()
-    database.initialize()
-    with database.connect() as connection:
+    database.initialize(cancellation)
+    with database.connect(cancellation) as connection:
         return HistoryService(
             ReadingRepository(connection),
             CalculationRepository(connection),
@@ -279,9 +302,11 @@ def _capture_status(
 ) -> StatusCaptureResult:
     cancellation = cancellation or uncancelled_context(15)
     cancellation.checkpoint()
-    database.initialize()
-    with database.connect() as connection:
-        settings = SettingsRepository(connection).load_tuya()
+    database.initialize(cancellation)
+    with database.connect(cancellation) as connection:
+        settings = SettingsRepository(
+            connection, database.client_secret_store()
+        ).load_tuya(cancellation)
         if settings is None or not settings.is_complete:
             raise UserFacingError(
                 "Setări incomplete",
@@ -301,13 +326,32 @@ def _prepare_settings(
 ) -> SettingsDialogContext:
     cancellation = cancellation or uncancelled_context(15)
     cancellation.checkpoint()
-    database.initialize()
+    database.initialize(cancellation)
     service = SettingsService(
         DatabaseSettingsStore(database),
-        TuyaClient,
+        lambda settings, cancellation: TuyaClient(
+            settings, cancellation=cancellation
+        ),
         REGION_LABELS,
     )
-    return SettingsDialogContext(service, service.load())
+    settings = service.load(cancellation)
+    return SettingsDialogContext(
+        service,
+        None if settings is None else replace(settings, client_secret=""),
+        settings is not None and bool(settings.client_secret),
+    )
+
+
+def _load_optional_remote_settings(
+    database: Database, cancellation: CancellationContext
+) -> TuyaSettings | None:
+    """Load optional remote capability without blocking local-only workflows."""
+
+    try:
+        return DatabaseSettingsStore(database).load_tuya(cancellation)
+    except ClientSecretUnavailableError:
+        cancellation.checkpoint()
+        return None
 
 
 def create_main_window(database: Database | None = None) -> MainWindow:
@@ -332,6 +376,7 @@ def create_main_window(database: Database | None = None) -> MainWindow:
                 REGION_LABELS,
                 window,
                 initial_settings=payload.settings,
+                stored_secret_available=payload.stored_secret_available,
                 worker_owner=owner,
             )
             dialog.error_raised.connect(lambda error: show_error(error, dialog))
@@ -347,9 +392,7 @@ def create_main_window(database: Database | None = None) -> MainWindow:
             saved = saved_result
             if saved is not None:
                 window.apply_settings(
-                    lambda context: _refresh_workflow(
-                        database, saved.settings, context
-                    ),
+                    lambda context: _refresh_with_saved_settings(database, context),
                     connection_verified=saved.connection_verified,
                     refresh_when_verified=True,
                 )

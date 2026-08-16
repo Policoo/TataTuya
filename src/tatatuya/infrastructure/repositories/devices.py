@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
+from typing import Any
 
 from tatatuya.domain.models import Device, EnergyEligibility
+from tatatuya.infrastructure.dbapi import dbapi as sqlite3
 from tatatuya.infrastructure.repositories._mapping import from_utc_text, to_utc_text
 
 
 class DeviceRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(self, connection: Any) -> None:
         self.connection = connection
 
     def upsert(self, device: Device, seen_at_utc: datetime | None = None) -> Device:
@@ -91,7 +92,8 @@ class DeviceRepository:
             ),
         )
         saved = self.get(device.device_id)
-        assert saved is not None
+        if saved is None:
+            raise sqlite3.DatabaseError("SQLite did not return the saved device")
         return saved
 
     def mark_all_missing(self) -> None:
@@ -110,7 +112,7 @@ class DeviceRepository:
         return [_map_device(row) for row in rows]
 
 
-def _map_device(row: sqlite3.Row) -> Device:
+def _map_device(row: Any) -> Device:
     online = row["online"]
     return Device(
         device_id=row["device_id"],

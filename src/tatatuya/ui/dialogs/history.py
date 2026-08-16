@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from tatatuya.domain.models import Device, Reading
 from tatatuya.services.history_service import HistoryContext
 from tatatuya.ui import text
+from tatatuya.ui.plain_text import plain_text_label
 from tatatuya.ui.formatters import (
     format_energy,
     format_local_datetime,
@@ -51,7 +52,7 @@ class HistoryDialog(QDialog):
         title = QLabel(text.HISTORY_TITLE)
         title.setObjectName("ModalTitle")
         layout.addWidget(title)
-        meter = QLabel(device.name)
+        meter = plain_text_label(device.name)
         meter.setObjectName("HistoryMeter")
         meter.setWordWrap(True)
         layout.addWidget(meter)
@@ -216,7 +217,7 @@ class HistoryDialog(QDialog):
         for index, (label, value) in enumerate(rows):
             label_widget = QLabel(label)
             label_widget.setObjectName("FieldLabel")
-            value_widget = QLabel(value)
+            value_widget = plain_text_label(value)
             value_widget.setObjectName("FieldValue")
             value_widget.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse

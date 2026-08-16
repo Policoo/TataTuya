@@ -11,7 +11,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QColor, QPalette, QPixmap
+from PySide6.QtGui import QColor, QPalette, QPixmap, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel, QPushButton
 
@@ -24,6 +24,7 @@ from tatatuya.domain.models import (
     TuyaSettings,
 )
 from tatatuya.infrastructure.database import Database
+from tatatuya.infrastructure.secrets import MemorySecretStore, SecretStoreError
 from tatatuya.infrastructure.repositories.devices import DeviceRepository
 from tatatuya.infrastructure.repositories.readings import ReadingRepository
 from tatatuya.infrastructure.repositories.settings import SettingsRepository
@@ -34,6 +35,7 @@ from tatatuya.ui import text
 from tatatuya.ui.app import (
     CLOUD_HISTORY_CONTRACT,
     _load_initial_state,
+    _prepare_calculation,
     _prepare_settings,
     create_main_window,
     load_stylesheet,
@@ -74,6 +76,95 @@ def representative_row() -> DeviceTableRow:
             1,
         ),
     )
+
+
+def test_device_table_tooltips_render_untrusted_text_literally() -> None:
+    qt_app = app()
+    malicious = (
+        '<img src="https://evil.invalid/pixel"> & <a href="x">link</a>\u202e'
+        + ("x" * 10_000)
+    )
+    row = replace(representative_row(), error_message=malicious)
+    window = MainWindow(cached_rows=[row], settings_configured=False)
+    table = window.table
+    qt_app.processEvents()
+
+    name_item = table.item(0, 0)
+    state_item = table.item(0, 1)
+    assert name_item is not None
+    assert state_item is not None
+    assert name_item.toolTip() == ""
+    tooltip = state_item.toolTip()
+    assert "<img" not in tooltip
+    assert "<a href" not in tooltip
+    assert "&lt;img" in tooltip
+    assert "\\u202e" in tooltip
+    document = QTextDocument()
+    document.setHtml(tooltip)
+    assert document.toPlainText() == malicious.replace("\u202e", "\\u202e")
+    window.close()
+
+
+def test_local_bootstrap_and_billing_survive_unavailable_client_secret(
+    tmp_path,
+) -> None:
+    path = tmp_path / "optional-secret.sqlite3"
+    initial_store = MemorySecretStore()
+    initial = Database(path, secret_store=initial_store)
+    initial.initialize()
+    with initial.connect() as connection:
+        SettingsRepository(connection, initial_store).save_non_secret_tuya(
+            TuyaSettings("client", "", "central_europe", Currency.EUR)
+        )
+        DeviceRepository(connection).upsert(Device("meter-1", "Contor local"))
+        readings = ReadingRepository(connection)
+        readings.add(
+            Reading(
+                "meter-1",
+                datetime(2026, 1, 1, tzinfo=UTC),
+                "100",
+                0,
+                "kWh",
+                Decimal("100"),
+                "batch",
+                "{}",
+            )
+        )
+        readings.add(
+            Reading(
+                "meter-1",
+                datetime(2026, 2, 1, tzinfo=UTC),
+                "120",
+                0,
+                "kWh",
+                Decimal("120"),
+                "batch",
+                "{}",
+            )
+        )
+
+    class DeniedStore:
+        def get(self, account, cancellation=None):
+            raise SecretStoreError("read", -25308)
+
+        def set(self, account, value, *, label, cancellation=None):
+            raise SecretStoreError("write", -25308)
+
+        def set_if_absent(self, account, value, *, label, cancellation=None):
+            raise SecretStoreError("write", -25308)
+
+        def delete(self, account, cancellation=None):
+            raise SecretStoreError("delete", -25308)
+
+    restarted = Database(path, secret_store=DeniedStore())
+    state = _load_initial_state(restarted)
+    calculation = _prepare_calculation(restarted, "meter-1")
+
+    assert [row.device.name for row in state.rows] == ["Contor local"]
+    assert state.settings_configured is False
+    assert calculation.currency is Currency.EUR
+    assert calculation.tuya_configured is False
+    assert len(calculation.readings) == 2
 
 
 def test_production_cloud_action_follows_proof_gate_and_credentials(
@@ -798,12 +889,13 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
             service,
             regions,
             parent=None,
-            *,
-            initial_settings=None,
-            worker_owner=None,
-        ):
-            super().__init__(parent)
-            self.service = service
+                *,
+                initial_settings=None,
+                stored_secret_available=False,
+                worker_owner=None,
+            ):
+                super().__init__(parent)
+                self.service = service
 
         def exec(self):
             saved = self.service.save(settings)
@@ -815,7 +907,9 @@ def test_verified_dialog_save_refreshes_only_after_settings_commit(
 
     def refresh(db, active_settings, cancellation=None):
         with db.connect() as connection:
-            persisted = SettingsRepository(connection).load_tuya()
+            persisted = SettingsRepository(
+                connection, database.client_secret_store()
+            ).load_tuya()
         refresh_observations.append((active_settings, persisted))
         return [DeviceRefreshResult(row.device, row.latest_reading, row.latest_reading)]
 

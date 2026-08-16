@@ -73,7 +73,9 @@ def test_fresh_database_primary_workflow_reconstructs_saved_calculation(
     )
 
     with database.connect() as connection:
-        SettingsRepository(connection).save_tuya(settings, STARTED_AT)
+        SettingsRepository(
+            connection, database.client_secret_store()
+        ).save_tuya(settings, STARTED_AT)
         devices = DeviceRepository(connection)
         readings = ReadingRepository(connection)
         client = TuyaClient(
@@ -135,7 +137,9 @@ def test_fresh_database_primary_workflow_reconstructs_saved_calculation(
         assert "[REDACTED]" in stored_device.raw_device_json
 
     with database.connect() as connection:
-        reloaded_settings = SettingsRepository(connection).load_tuya()
+        reloaded_settings = SettingsRepository(
+            connection, database.client_secret_store()
+        ).load_tuya()
         reloaded_readings = ReadingRepository(connection).list_for_device("meter-1")
         reloaded = CalculationRepository(connection).latest_for_device("meter-1")
         restarted_history = HistoryService(

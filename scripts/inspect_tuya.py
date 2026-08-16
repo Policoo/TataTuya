@@ -724,7 +724,9 @@ def _load_client(path: Path) -> TuyaClient:
         raise RuntimeError(f"TataTuya database does not exist: {path}")
     database = Database(path)
     with database.connect() as connection:
-        settings = SettingsRepository(connection).load_tuya()
+        settings = SettingsRepository(
+            connection, database.client_secret_store()
+        ).load_tuya()
     if settings is None or not settings.is_complete:
         raise RuntimeError(
             "Saved Tuya settings are missing or incomplete. Configure them in TataTuya first."

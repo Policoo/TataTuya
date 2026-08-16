@@ -28,7 +28,8 @@ June boundary reading with a July boundary reading imported a few days late.
 - Retrieve statuses in batches and individually.
 - Discover the forward-energy data point, unit, and scale from each device's
   specification.
-- Store every usable current-status energy reading in SQLite.
+- Store every usable current-status energy reading in an encrypted SQLCipher
+  database.
 - Calculate a cost for one meter between two stored readings.
 - Remember the most recently used price separately for each meter.
 - Select a global currency of RON or EUR.
@@ -78,7 +79,7 @@ independent of the current on-screen result presentation.
 - Historical records must remain reproducible even when later settings change.
 - Failures should explain what the user can do next and must not crash the app.
 - The application is read-only with respect to Tuya but maintains its own local
-  history in SQLite.
+  history in an encrypted local database.
 
 ## 4. Main window
 
@@ -445,16 +446,46 @@ There is no first-run wizard. Settings contains:
 - `Testează conexiunea`
 - `Salvează`
 
-Credentials are stored in the local SQLite database. A failed connection test
-must not be displayed as a successful setup.
+On production macOS, the Client Secret is stored automatically as a Keychain
+generic password; it is never stored in the logical database. Client ID, region,
+and currency are stored in the database. On later visits the secret field stays
+empty and uses backend-neutral text to show that a secret is stored. Leaving it
+untouched preserves the stored value; entering a new value replaces it after
+validation. A failed connection test must not be displayed as a successful
+setup.
 
 ### Application configuration
 
 - Currency dropdown containing RON and EUR
 
 Currency is an application setting and remains readable independently from Tuya
-credentials. Missing or invalid Tuya connection fields may disable remote
-workflows but must not disable calculations from persisted readings.
+credentials. Missing, denied, or corrupt Tuya credentials may disable remote
+workflows but must not disable cached devices, history, currency, or calculations
+from persisted readings. Settings and explicit remote actions show an actionable
+Romanian credential-storage error.
+
+### Local-data protection and recovery
+
+The complete database is encrypted with SQLCipher using a random 256-bit key
+stored separately in macOS Keychain. The application data directory uses mode
+`0700`; the database, sidecars, migration temporaries, and log use `0600`.
+TataTuya fails closed when Keychain or SQLCipher is unavailable and never
+replaces an unreadable database with an empty or plaintext one.
+
+This fail-closed rule is the production macOS policy. Linux and other POSIX
+development systems outside macOS use ordinary SQLite and a separate
+`tuya-client-secret.plaintext` artifact by default so restart behavior is
+realistic without hidden environment switches. Those permissions are best
+effort, not encryption; only test credentials may be used. Windows development
+is unsupported and reports that limitation explicitly. Production macOS cannot
+select the plaintext backend.
+
+Version one uses the local-key policy: losing the login Keychain item can make
+the local history permanently unreadable. Copying only `tatatuya.sqlite3` is not
+a complete portable backup, and version one does not offer database export.
+Users who depend on the history must include the login Keychain in their tested
+Mac migration/Time Machine recovery process. This protection does not defend
+against malware controlling the logged-in session or TataTuya while it is open.
 
 ## 10. Info and diagnostics
 
